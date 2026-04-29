@@ -1,0 +1,13 @@
+data/
+.vscode/
+logs/
+output/
+reports/
+
+intermediate/
+generate_structure.py
+scripts/common/__pycache__
+output_augmented_data/
+models/
+intermediate_former/
+task_20260429/

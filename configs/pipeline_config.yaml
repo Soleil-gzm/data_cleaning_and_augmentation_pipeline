@@ -1,0 +1,47 @@
+# 全局设置
+base_dir: /path/to/your/project          # 项目根目录，后续所有路径均使用相对路径
+default_task: task_001                   # 当前任务名称
+
+tasks:
+  task_001:                              # 一个任务示例
+    raw_data:
+      dialogue_dir: ./data/Yangqg_simulation_data      # 原始对话文件目录
+      prompt_dir: ./data/cases_random                  # system 提示目录
+    intermediate:
+      raw_json: ./intermediate/raw_dialogues.json      # 00 生成
+      samples_dir: ./intermediate/samples              # 01 输出
+      bucketed_dir: ./intermediate/bucketed            # 02 输出
+      cleaned_root: ./intermediate/cleaned_jsonl       # 03 输出根
+      trace_root: ./intermediate/trace_output          # 03 trace 根
+      final_training_dir: ./intermediate/final_training_data  # 04 输出
+    cleaning:
+      configs_dir: ./configs/configs_qa                # 清洗配置文件目录
+      bucket_config_map:                              # 桶名 → 配置文件名（动态桶会覆盖）
+        bucket_0: config_bucket_0.yaml
+        bucket_10plus: config_bucket_10plus.yaml
+      default_config: overal_config.yaml              # 未匹配桶的默认配置
+    augmentation:
+      output_root: ./output_augmented_data            # 05 输出根
+      num_variants: 3
+      min_turns: 1
+      max_turns: 2
+      target_roles: ["user"]
+      only_loss_true: false
+      adaptive_variants: false
+      seed: 42
+    split:
+      batch_size: 120000                               # 01 每批对话数
+    buckets:                                           # 分桶策略：auto 或 manual
+      strategy: auto
+      auto_params:
+        method: quantile           # quantile（分位数）或 fixed_range（固定区间）
+        num_buckets: 8             # 期望桶数量（仅 quantile 有效）
+        min_samples_per_bucket: 500  # 每个桶最少样本数
+        max_turn: 100
+      manual:                                         # strategy = manual 时使用
+        - { low: 0, high: 0, name: bucket_0 }
+        - { low: 1, high: 2, name: bucket_1_2 }
+        - { low: 3, high: 5, name: bucket_3_5 }
+        - { low: 6, high: 10, name: bucket_6_10 }
+        - { low: 11, high: 20, name: bucket_11_20 }
+        - { low: 21, high: inf, name: bucket_21plus }
