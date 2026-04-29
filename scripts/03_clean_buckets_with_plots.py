@@ -13,6 +13,8 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
+import logging
+import re
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
@@ -70,6 +72,38 @@ BUCKET_CONFIG_MAP = {
 }
 
 # ========== 辅助函数 ==========
+def setup_logger(task_dir):
+    log_dir = task_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "clean_buckets.log"
+    logger = logging.getLogger("CleanBuckets")
+    logger.setLevel(logging.DEBUG)
+    if logger.handlers:
+        logger.handlers.clear()
+    fh = logging.FileHandler(log_file, encoding='utf-8')
+    fh.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    return logger
+
+def get_config_for_bucket(bucket_name, bucket_config_map):
+    """
+    根据正则表达式匹配桶的配置文件
+    bucket_config_map: list of {"pattern": "regex", "config": "filename.yaml"}
+    """
+    for entry in bucket_config_map:
+        pattern = entry.get('pattern')
+        if pattern is None:
+            continue
+        if re.match(pattern, bucket_name):
+            return entry['config']
+    return None
+
 def count_samples_in_jsonl(file_path):
     if not file_path.exists():
         return 0
@@ -135,11 +169,11 @@ def plot_turn_distribution(bucket_name, input_dist, output_dist, output_dir, sel
 
 def clean_bucket(bucket_dir, config_file, output_dir, trace_dir, stats):
     if not bucket_dir.exists():
-        print(f"  目录不存在: {bucket_dir}")
+        logger.info(f"  目录不存在: {bucket_dir}")
         return 0
     input_files = list(bucket_dir.glob("*.jsonl"))
     if not input_files:
-        print(f"  没有找到 JSONL 文件")
+        logger.info(f"  没有找到 JSONL 文件")
         return 0
     print(f"\n  发现 {len(input_files)} 个文件")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -238,60 +272,127 @@ def clean_bucket(bucket_dir, config_file, output_dir, trace_dir, stats):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tag", type=str, default="default", help="清洗任务标签")
+    parser.add_argument("--config_json", type=str, help="全局配置JSON")
+    parser.add_argument("--bucketed_root", type=str, help="分桶后的根目录")
+    parser.add_argument("--cleaned_root", type=str, help="清洗输出根目录")
+    parser.add_argument("--trace_root", type=str, help="trace输出根目录")
+    parser.add_argument("--configs_dir", type=str, default="configs/configs_qa")
+    parser.add_argument("--bucket_config_map", type=str, help="JSON格式的正则映射列表")
     args = parser.parse_args()
+    
+    if args.config_json:
+        config = json.loads(args.config_json)
+        task_name = config['task_name']
+        base_dir = Path(config['paths']['output']['base_dir'])
+        bucketed_root = base_dir / task_name / "bucketed"
+        cleaned_root = base_dir / task_name / "cleaned_jsonl"
+        trace_root = base_dir / task_name / "trace_output"
+        configs_dir = args.configs_dir or config.get('steps', {}).get('03_clean', {}).get('configs_dir', 'configs/configs_qa')
+        bucket_config_map = json.loads(args.bucket_config_map) if args.bucket_config_map else config.get('steps', {}).get('03_clean', {}).get('bucket_config_map', [])
+    else:
+        # 兼容直接运行
+        bucketed_root = Path(args.bucketed_root)
+        cleaned_root = Path(args.cleaned_root)
+        trace_root = Path(args.trace_root)
+        configs_dir = Path(args.configs_dir)
+        bucket_config_map = json.loads(args.bucket_config_map) if args.bucket_config_map else []
+    
+    # 设置日志
+    task_dir = bucketed_root.parent
+    logger = setup_logger(task_dir)
+    logger.info("开始清洗流程")
+    logger.info(f"分桶根目录: {bucketed_root}")
+    logger.info(f"清洗输出根目录: {cleaned_root}")
+    
+    # 创建时间戳 run_id
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_id = f"{timestamp}_clean_{args.tag}"
-    cleaned_base = Path(CLEANED_ROOT) / run_id
-    trace_base = Path(TRACE_ROOT) / run_id
-    report_base = Path(REPORT_DIR) / run_id
+    run_id = f"{timestamp}_clean_{config.get('task_name', 'task')}"
+    cleaned_base = cleaned_root / run_id
+    trace_base = trace_root / run_id
+    report_base = task_dir / "reports" / run_id
+    cleaned_base.mkdir(parents=True, exist_ok=True)
+    trace_base.mkdir(parents=True, exist_ok=True)
     report_base.mkdir(parents=True, exist_ok=True)
-    print(f"Run ID: {run_id}")
-    print(f"清洗结果目录: {cleaned_base}")
-    print(f"Trace 目录: {trace_base}")
-    print(f"报告目录: {report_base}")
-    overall_stats = {
-        "run_id": run_id,
-        "buckets": {},
-        "total_input": 0,
-        "total_output": 0,
-        "overall_input_turn_dist": defaultdict(int),
-        "overall_output_turn_dist": defaultdict(int),
-    }
-    total_success = 0
-    for bucket_name, config_filename in BUCKET_CONFIG_MAP.items():
-        bucket_dir = Path(BUCKETED_ROOT) / bucket_name
-        if not bucket_dir.exists():
-            print(f"跳过不存在的桶目录: {bucket_dir}")
+    
+    overall_stats = {"buckets": {}, "total_input": 0, "total_output": 0}
+    
+    # 遍历所有桶目录
+    for bucket_dir in bucketed_root.iterdir():
+        if not bucket_dir.is_dir():
             continue
-        config_file = Path(CONFIGS_DIR) / config_filename
+        bucket_name = bucket_dir.name
+        # 获取该桶对应的配置文件
+        config_filename = get_config_for_bucket(bucket_name, bucket_config_map)
+        if not config_filename:
+            logger.warning(f"桶 {bucket_name} 未匹配到配置文件，跳过")
+            continue
+        config_file = Path(configs_dir) / config_filename
         if not config_file.exists():
-            print(f"⚠️ 配置文件 {config_file} 不存在，跳过桶 {bucket_name}")
+            logger.warning(f"配置文件 {config_file} 不存在，跳过桶 {bucket_name}")
             continue
-        print(f"\n处理桶: {bucket_name}")
+        
+        logger.info(f"处理桶: {bucket_name}，使用配置 {config_filename}")
         output_dir = cleaned_base / bucket_name
         trace_dir = trace_base / bucket_name
-        success = clean_bucket(bucket_dir, config_file, output_dir, trace_dir, overall_stats)
-        total_success += success
-        if bucket_name in overall_stats["buckets"]:
-            bucket_stats = overall_stats["buckets"][bucket_name]
-            bucket_report_file = report_base / f"{bucket_name}_report.json"
-            with open(bucket_report_file, 'w') as f:
-                json.dump(bucket_stats, f, indent=2)
-            plot_turn_distribution(
-                bucket_name,
-                bucket_stats["input_turn_dist"],
-                bucket_stats["output_turn_dist"],
-                report_base,
-                selected_turns=PLOT_TURNS
-            )
-    for bucket, stats in overall_stats["buckets"].items():
-        overall_stats["total_input"] += stats["input_samples"]
-        overall_stats["total_output"] += stats["output_samples"]
-        for turn, cnt in stats["input_turn_dist"].items():
-            overall_stats["overall_input_turn_dist"][turn] += cnt
-        for turn, cnt in stats["output_turn_dist"].items():
-            overall_stats["overall_output_turn_dist"][turn] += cnt
+
+
+
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--tag", type=str, default="default", help="清洗任务标签")
+    # args = parser.parse_args()
+    # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # run_id = f"{timestamp}_clean_{args.tag}"
+    # cleaned_base = Path(CLEANED_ROOT) / run_id
+    # trace_base = Path(TRACE_ROOT) / run_id
+    # report_base = Path(REPORT_DIR) / run_id
+    # report_base.mkdir(parents=True, exist_ok=True)
+    # print(f"Run ID: {run_id}")
+    # print(f"清洗结果目录: {cleaned_base}")
+    # print(f"Trace 目录: {trace_base}")
+    # print(f"报告目录: {report_base}")
+    # overall_stats = {
+    #     "run_id": run_id,
+    #     "buckets": {},
+    #     "total_input": 0,
+    #     "total_output": 0,
+    #     "overall_input_turn_dist": defaultdict(int),
+    #     "overall_output_turn_dist": defaultdict(int),
+    # }
+    # total_success = 0
+    # for bucket_name, config_filename in BUCKET_CONFIG_MAP.items():
+    #     bucket_dir = Path(BUCKETED_ROOT) / bucket_name
+    #     if not bucket_dir.exists():
+    #         print(f"跳过不存在的桶目录: {bucket_dir}")
+    #         continue
+    #     config_file = Path(CONFIGS_DIR) / config_filename
+    #     if not config_file.exists():
+    #         print(f"⚠️ 配置文件 {config_file} 不存在，跳过桶 {bucket_name}")
+    #         continue
+    #     print(f"\n处理桶: {bucket_name}")
+    #     output_dir = cleaned_base / bucket_name
+    #     trace_dir = trace_base / bucket_name
+    #     success = clean_bucket(bucket_dir, config_file, output_dir, trace_dir, overall_stats)
+    #     total_success += success
+    #     if bucket_name in overall_stats["buckets"]:
+    #         bucket_stats = overall_stats["buckets"][bucket_name]
+    #         bucket_report_file = report_base / f"{bucket_name}_report.json"
+    #         with open(bucket_report_file, 'w') as f:
+    #             json.dump(bucket_stats, f, indent=2)
+    #         plot_turn_distribution(
+    #             bucket_name,
+    #             bucket_stats["input_turn_dist"],
+    #             bucket_stats["output_turn_dist"],
+    #             report_base,
+    #             selected_turns=PLOT_TURNS
+    #         )
+    # for bucket, stats in overall_stats["buckets"].items():
+    #     overall_stats["total_input"] += stats["input_samples"]
+    #     overall_stats["total_output"] += stats["output_samples"]
+    #     for turn, cnt in stats["input_turn_dist"].items():
+    #         overall_stats["overall_input_turn_dist"][turn] += cnt
+    #     for turn, cnt in stats["output_turn_dist"].items():
+    #         overall_stats["overall_output_turn_dist"][turn] += cnt
+    
     # 保存全局报告
     overall_report_file = report_base / "overall_report.json"
     report_data = {

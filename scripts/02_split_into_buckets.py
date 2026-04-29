@@ -1,77 +1,48 @@
 #!/usr/bin/env python3
 """
-split_into_buckets.py
-将 samples/ 目录下的所有 JSONL 文件按 turn 值分桶，输出到 bucketed/ 目录
-桶定义：
-   bucket_0_2  : turn 0,1,2
-   bucket_3_5  : turn 3,4,5
-   bucket_6_10 : turn 6,7,8,9,10
-   bucket_11_20: turn 11..20
-   bucket_21plus: turn >=21
+分桶脚本（增强版）
+支持手动/自动分桶策略，自动读取 turn_distribution.json 生成桶边界
+用法: python 02_split_into_buckets.py --config_json '{"task_name":"xxx", ...}'
+     或直接传递 --samples_dir --buckets_json
 """
 
 import json
 import os
+import sys
+import argparse
+import logging
 from pathlib import Path
 from collections import defaultdict
 
-# 配置
-INPUT_DIR = "task_20260429/task_92049/output_cleaning/samples"
-OUTPUT_BASE = "task_20260429/task_92049/output_cleaning/bucketed"
+def setup_logger(task_dir=None):
+    logger = logging.getLogger("BucketSplit")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    return logger
 
-BUCKETS = {
-    (0, 0): "bucket_0",
-    (1, 1):"bucket_1",
-    (2, 2): "bucket_2",
-    (3, 3): "bucket_3",
-    (4, 4): "bucket_4",
-    (5, 5): "bucket_5",
-    (6, 6): "bucket_6",
-    (7, 7): "bucket_7",
-    (8, 8): "bucket_8",
-    (9, 9): "bucket_9",
-    (10, float('inf')): "bucket_10plus",
-}
+logger = setup_logger()
 
-# task_20260429/task_92049/
-BUCKETS = {
-    (0, 0): "bucket_0",
-    (1, 1):"bucket_1",
-    (2, 2): "bucket_2",
-    (3, 3): "bucket_3",
-    (4, 4): "bucket_4",
-    (5, 5): "bucket_5",
-    (6, 6): "bucket_6",
-    (7, 7): "bucket_7",
-    (8, 8): "bucket_8",
-    (9, 9): "bucket_9",
-    (10, 10): "bucket_10",
-    (11, 11): "bucket_11",
-    (12, 12): "bucket_12",
-    (13, 22): "bucket_13_22",
-    (23, float('inf')): "bucket_23plus",
-}
-
-'''
-根据 turn 值查找对应的桶名称。
-遍历 BUCKETS 的每一项，如果 low <= turn <= high 则返回该桶名。
-如果没找到（理论上不会发生，因为最后一个桶覆盖到无穷大），则返回 "bucket_23plus" 作为备用名称。
-'''
 def load_turn_distribution(stats_dir):
-    """从 stats_dir/turn_distribution.json 加载轮次统计"""
+    """加载轮次分布文件"""
     stats_file = Path(stats_dir) / "turn_distribution.json"
     if not stats_file.exists():
         raise FileNotFoundError(f"未找到轮次统计文件: {stats_file}")
     with open(stats_file, 'r') as f:
         data = json.load(f)
-    return data['turn_distribution']   # { turn: count }
+    return {int(k): v for k, v in data.get('turn_distribution', {}).items()}
 
-def auto_buckets_from_distribution(turn_dist, strategy="percentile", params=None):
+def auto_buckets_from_distribution(turn_dist, strategy, params=None):
     """
-    根据轮次分布自动生成桶边界列表。
-    返回: list of (low, high) 区间，如 [(0,0), (1,2), (3,5), ...]
+    自动生成桶边界
+    :param turn_dist: dict {turn: count}
+    :param strategy: "percentile" 或 "equal_count"
+    :param params: 对应的参数字典
     """
-    turns = sorted([int(k) for k in turn_dist.keys()])
+    turns = sorted(turn_dist.keys())
     counts = [turn_dist[t] for t in turns]
     cumulative = []
     total = sum(counts)
@@ -79,31 +50,27 @@ def auto_buckets_from_distribution(turn_dist, strategy="percentile", params=None
     for cnt in counts:
         running += cnt
         cumulative.append(running / total)
-
+    
     if strategy == "percentile":
         percentiles = params.get('percentiles', [0, 25, 50, 75, 90, 95, 100])
-        # 找到每个百分位对应的 turn
         boundaries = set()
         for p in percentiles:
             target = p / 100.0
-            # 找到第一个累计比例 >= target 的索引
             for i, cum in enumerate(cumulative):
                 if cum >= target:
                     boundaries.add(turns[i])
                     break
         boundaries = sorted(boundaries)
-        # 生成区间
         buckets = []
         for i in range(len(boundaries)-1):
             low = boundaries[i]
             high = boundaries[i+1] - 1 if boundaries[i+1] > boundaries[i] else boundaries[i]
             if low <= high:
                 buckets.append((low, high))
-        # 特殊处理最后一个桶到无穷
-        last_turn = boundaries[-1]
-        buckets.append((last_turn, float('inf')))
+        # 最后一个桶到无穷
+        last = boundaries[-1]
+        buckets.append((last, float('inf')))
         return buckets
-
     elif strategy == "equal_count":
         min_bucket_size = params.get('min_bucket_size', 1000)
         buckets = []
@@ -118,45 +85,88 @@ def auto_buckets_from_distribution(turn_dist, strategy="percentile", params=None
         if start <= turns[-1]:
             buckets.append((start, float('inf')))
         return buckets
-
     else:
-        raise ValueError(f"未知策略: {strategy}")
+        raise ValueError(f"未知自动分桶策略: {strategy}")
 
-def get_bucket_name(turn):
-    for (low, high), name in BUCKETS.items():
+def get_bucket_name(turn, buckets):
+    """根据桶边界列表获取桶名"""
+    for idx, (low, high) in enumerate(buckets):
         if low <= turn <= high:
-            return name
-    return "bucket_23plus"  # fallback
+            return f"bucket_{low}_{high if high != float('inf') else 'plus'}"
+    return "bucket_unknown"
 
 def main():
-    input_path = Path(INPUT_DIR)
-    if not input_path.exists():
-        print(f"错误：目录 {INPUT_DIR} 不存在，请先运行拆分脚本生成 samples/")
-        return
-
-    output_base = Path(OUTPUT_BASE)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_json", type=str, help="全局配置JSON字符串")
+    parser.add_argument("--samples_dir", type=str, help="samples目录路径")
+    parser.add_argument("--output_base", type=str, help="输出桶根目录")
+    parser.add_argument("--strategy", type=str, choices=['auto','manual','percentile','equal_count'], default='auto')
+    parser.add_argument("--auto_params", type=str, help="自动分桶参数JSON")
+    parser.add_argument("--manual_buckets", type=str, help="手动桶边界JSON")
+    args = parser.parse_args()
+    
+    # 解析配置
+    if args.config_json:
+        config = json.loads(args.config_json)
+        task_name = config['task_name']
+        base_dir = Path(config['paths']['output']['base_dir'])
+        samples_dir = base_dir / task_name / "samples"
+        output_base = base_dir / task_name / "bucketed"
+        # 从steps.02_bucket中获取策略
+        bucket_cfg = config.get('steps', {}).get('02_bucket', {})
+        strategy = bucket_cfg.get('strategy', 'auto')
+        auto_params = bucket_cfg.get('auto_params', {})
+        manual_buckets = bucket_cfg.get('manual_buckets', [])
+    else:
+        # 直接命令行模式
+        samples_dir = Path(args.samples_dir)
+        output_base = Path(args.output_base) if args.output_base else Path("bucketed")
+        strategy = args.strategy
+        auto_params = json.loads(args.auto_params) if args.auto_params else {}
+        manual_buckets = json.loads(args.manual_buckets) if args.manual_buckets else []
+    
+    logger.info(f"分桶输入目录: {samples_dir}")
+    logger.info(f"输出根目录: {output_base}")
+    
+    # 获取轮次分布
+    stats_dir = samples_dir.parent / "stats"   # 假设stats在samples同级目录
+    turn_dist = load_turn_distribution(stats_dir)
+    logger.info(f"加载轮次分布，共 {len(turn_dist)} 种轮次")
+    
+    # 生成桶边界
+    if strategy == 'auto' or strategy == 'percentile' or strategy == 'equal_count':
+        # 自动策略统一处理
+        if strategy == 'auto':
+            strategy = 'percentile'   # 默认百分位
+        buckets = auto_buckets_from_distribution(turn_dist, strategy, auto_params)
+        logger.info(f"自动生成 {len(buckets)} 个桶: {buckets}")
+    elif strategy == 'manual':
+        if not manual_buckets:
+            raise ValueError("手动策略但未提供 manual_buckets")
+        buckets = [(low, high) for low, high in manual_buckets]
+    else:
+        raise ValueError(f"不支持的分桶策略: {strategy}")
+    
+    # 建立桶名到输出目录的映射
     output_base.mkdir(parents=True, exist_ok=True)
-
-    # 为每个桶创建子目录并清空（避免旧数据干扰）
     bucket_dirs = {}
-    for name in set(get_bucket_name(i) for i in range(0, 100)):
-        bucket_dir = output_base / name
+    for idx, (low, high) in enumerate(buckets):
+        if high == float('inf'):
+            bucket_name = f"bucket_{low}_plus"
+        else:
+            bucket_name = f"bucket_{low}_{high}"
+        bucket_dir = output_base / bucket_name
         bucket_dir.mkdir(exist_ok=True)
-        # 清空目录内容（可选，注释掉则不清空）
+        bucket_dirs[bucket_name] = bucket_dir
+        # 清空目录内容（可选）
         for f in bucket_dir.glob("*.jsonl"):
             f.unlink()
-        bucket_dirs[name] = bucket_dir
-
-    # 遍历所有 JSONL 文件
-    jsonl_files = list(input_path.glob("*.jsonl"))
-    print(f"找到 {len(jsonl_files)} 个 JSONL 文件")
-
-    # 为每个桶准备写入文件（保持原文件名，但放入对应桶目录）
-    # 由于一个文件内可能包含多种 turn，我们需要为每个桶动态打开文件
-    # 简单起见：对每个输入文件，遍历其行，按桶写入多个输出文件（同名）
+    
+    # 遍历所有jsonl文件并分桶
+    jsonl_files = list(samples_dir.glob("*.jsonl"))
+    logger.info(f"找到 {len(jsonl_files)} 个样本文件")
     for input_file in jsonl_files:
-        print(f"处理: {input_file.name}")
-        # 为每个桶准备该文件的输出句柄（延迟打开）
+        logger.debug(f"处理文件: {input_file.name}")
         file_handles = {}
         try:
             with open(input_file, 'r', encoding='utf-8') as f:
@@ -167,22 +177,23 @@ def main():
                     turn = data.get('turn')
                     if turn is None:
                         continue
-                    bucket = get_bucket_name(turn)
-                    # 获取输出文件路径
-                    output_file = bucket_dirs[bucket] / input_file.name
-                    # 打开文件句柄（追加模式）
-                    if output_file not in file_handles:
-                        file_handles[output_file] = open(output_file, 'a', encoding='utf-8')
-                    file_handles[output_file].write(line)
+                    bucket_name = get_bucket_name(turn, buckets)
+                    bucket_dir = bucket_dirs.get(bucket_name)
+                    if not bucket_dir:
+                        logger.warning(f"turn {turn} 未匹配到桶，跳过")
+                        continue
+                    out_file = bucket_dir / input_file.name
+                    if out_file not in file_handles:
+                        file_handles[out_file] = open(out_file, 'a', encoding='utf-8')
+                    file_handles[out_file].write(line)
         finally:
             for h in file_handles.values():
                 h.close()
-
-    # 打印统计
-    print("\n分桶完成，各桶文件统计：")
-    for name, dir_path in bucket_dirs.items():
-        count = sum(1 for _ in dir_path.glob("*.jsonl"))
-        print(f"  {name}: {count} 个文件")
+    
+    logger.info(f"分桶完成，输出目录: {output_base}")
+    for name, d in bucket_dirs.items():
+        cnt = sum(1 for _ in d.glob("*.jsonl"))
+        logger.info(f"  {name}: {cnt} 个文件")
 
 if __name__ == "__main__":
     main()
