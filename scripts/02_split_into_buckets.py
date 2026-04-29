@@ -19,19 +19,19 @@ from collections import defaultdict
 INPUT_DIR = "task_20260429/task_92049/output_cleaning/samples"
 OUTPUT_BASE = "task_20260429/task_92049/output_cleaning/bucketed"
 
-# BUCKETS = {
-#     (0, 0): "bucket_0",
-#     (1, 1):"bucket_1",
-#     (2, 2): "bucket_2",
-#     (3, 3): "bucket_3",
-#     (4, 4): "bucket_4",
-#     (5, 5): "bucket_5",
-#     (6, 6): "bucket_6",
-#     (7, 7): "bucket_7",
-#     (8, 8): "bucket_8",
-#     (9, 9): "bucket_9",
-#     (10, float('inf')): "bucket_10plus",
-# }
+BUCKETS = {
+    (0, 0): "bucket_0",
+    (1, 1):"bucket_1",
+    (2, 2): "bucket_2",
+    (3, 3): "bucket_3",
+    (4, 4): "bucket_4",
+    (5, 5): "bucket_5",
+    (6, 6): "bucket_6",
+    (7, 7): "bucket_7",
+    (8, 8): "bucket_8",
+    (9, 9): "bucket_9",
+    (10, float('inf')): "bucket_10plus",
+}
 
 # task_20260429/task_92049/
 BUCKETS = {
@@ -57,6 +57,71 @@ BUCKETS = {
 遍历 BUCKETS 的每一项，如果 low <= turn <= high 则返回该桶名。
 如果没找到（理论上不会发生，因为最后一个桶覆盖到无穷大），则返回 "bucket_23plus" 作为备用名称。
 '''
+def load_turn_distribution(stats_dir):
+    """从 stats_dir/turn_distribution.json 加载轮次统计"""
+    stats_file = Path(stats_dir) / "turn_distribution.json"
+    if not stats_file.exists():
+        raise FileNotFoundError(f"未找到轮次统计文件: {stats_file}")
+    with open(stats_file, 'r') as f:
+        data = json.load(f)
+    return data['turn_distribution']   # { turn: count }
+
+def auto_buckets_from_distribution(turn_dist, strategy="percentile", params=None):
+    """
+    根据轮次分布自动生成桶边界列表。
+    返回: list of (low, high) 区间，如 [(0,0), (1,2), (3,5), ...]
+    """
+    turns = sorted([int(k) for k in turn_dist.keys()])
+    counts = [turn_dist[t] for t in turns]
+    cumulative = []
+    total = sum(counts)
+    running = 0
+    for cnt in counts:
+        running += cnt
+        cumulative.append(running / total)
+
+    if strategy == "percentile":
+        percentiles = params.get('percentiles', [0, 25, 50, 75, 90, 95, 100])
+        # 找到每个百分位对应的 turn
+        boundaries = set()
+        for p in percentiles:
+            target = p / 100.0
+            # 找到第一个累计比例 >= target 的索引
+            for i, cum in enumerate(cumulative):
+                if cum >= target:
+                    boundaries.add(turns[i])
+                    break
+        boundaries = sorted(boundaries)
+        # 生成区间
+        buckets = []
+        for i in range(len(boundaries)-1):
+            low = boundaries[i]
+            high = boundaries[i+1] - 1 if boundaries[i+1] > boundaries[i] else boundaries[i]
+            if low <= high:
+                buckets.append((low, high))
+        # 特殊处理最后一个桶到无穷
+        last_turn = boundaries[-1]
+        buckets.append((last_turn, float('inf')))
+        return buckets
+
+    elif strategy == "equal_count":
+        min_bucket_size = params.get('min_bucket_size', 1000)
+        buckets = []
+        start = turns[0]
+        cum_cnt = 0
+        for t, cnt in zip(turns, counts):
+            cum_cnt += cnt
+            if cum_cnt >= min_bucket_size:
+                buckets.append((start, t))
+                start = t + 1
+                cum_cnt = 0
+        if start <= turns[-1]:
+            buckets.append((start, float('inf')))
+        return buckets
+
+    else:
+        raise ValueError(f"未知策略: {strategy}")
+
 def get_bucket_name(turn):
     for (low, high), name in BUCKETS.items():
         if low <= turn <= high:

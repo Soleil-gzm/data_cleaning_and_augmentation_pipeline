@@ -1,5 +1,5 @@
 # 全局设置
-base_dir: /path/to/your/project          # 项目根目录，后续所有路径均使用相对路径
+base_dir: /home/GUO_Zimeng/coding/data_cleaning_and_augmentation_pipeline         # 项目根目录，后续所有路径均使用相对路径
 default_task: task_001                   # 当前任务名称
 
 tasks:
@@ -7,34 +7,39 @@ tasks:
     raw_data:
       dialogue_dir: ./data/Yangqg_simulation_data      # 原始对话文件目录
       prompt_dir: ./data/cases_random                  # system 提示目录
+
     intermediate:
-      raw_json: ./intermediate/raw_dialogues.json      # 00 生成
-      samples_dir: ./intermediate/samples              # 01 输出
-      bucketed_dir: ./intermediate/bucketed            # 02 输出
-      cleaned_root: ./intermediate/cleaned_jsonl       # 03 输出根
-      trace_root: ./intermediate/trace_output          # 03 trace 根
-      final_training_dir: ./intermediate/final_training_data  # 04 输出
+      raw_json: ./intermediate/raw_dialogues.json      # 00 脚本生成的原始对话 JSON
+      samples_dir: ./intermediate/samples              # 01 脚本拆分后的 JSONL 目录
+      bucketed_dir: ./intermediate/bucketed            # 02 脚本分桶后的目录
+      cleaned_root: ./intermediate/cleaned_jsonl       # 03 清洗结果根目录（内部自动按 run_id 建子目录）
+      trace_root: ./intermediate/trace_output          # 03 清洗 trace 根目录
+      final_training_dir: ./intermediate/final_training_data  # 04 清洗后的最终训练数据目录
+
     cleaning:
-      configs_dir: ./configs/configs_qa                # 清洗配置文件目录
-      bucket_config_map:                              # 桶名 → 配置文件名（动态桶会覆盖）
+      configs_dir: ./configs/configs_qa                # 存放各桶清洗配置 .yaml 的目录
+      bucket_config_map:                              # 桶名 → 配置文件名（仅用于 manual 模式或自动模式下的覆盖）
         bucket_0: config_bucket_0.yaml
         bucket_10plus: config_bucket_10plus.yaml
-      default_config: overal_config.yaml              # 未匹配桶的默认配置
+      default_config: overal_config.yaml              # 未在 map 中指定的桶使用此默认配置
+
     augmentation:
-      output_root: ./output_augmented_data            # 05 输出根
-      num_variants: 3
+      output_root: ./output_augmented_data            # 05 增强输出根目录
+      num_variants: 3                                 # 变体数量
       min_turns: 1
       max_turns: 2
-      target_roles: ["user"]
-      only_loss_true: false
+      target_roles: ["user"]                          # 可增强的角色，可选 user, assistant
+      only_loss_true: false                           # 是否只增强 loss="True" 的 user
       adaptive_variants: false
       seed: 42
+
     split:
-      batch_size: 120000                               # 01 每批对话数
+      batch_size: 120000                               # 01 脚本中每个批次 JSONL 包含的对话数
+
     buckets:                                           # 分桶策略：auto 或 manual
       strategy: auto
       auto_params:
-        method: quantile           # quantile（分位数）或 fixed_range（固定区间）
+        method: quantile           # quantile（按样本数分位数）或 fixed_range（固定turn区间）
         num_buckets: 8             # 期望桶数量（仅 quantile 有效）
         min_samples_per_bucket: 500  # 每个桶最少样本数
         max_turn: 100
