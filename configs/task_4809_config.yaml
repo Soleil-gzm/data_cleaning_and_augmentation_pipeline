@@ -1,11 +1,11 @@
-task_name: "my_task_20260429"
+task_name: "task_4809"
 run_id: "20260429_001"               # 可选，不填则自动生成时间戳
 resume: true                         # 是否启用断点续跑
 
 paths:
   input:
-    raw_dialogues_dir: "./data/Yangqg_simulation_data"
-    prompt_dir: "./data/cases_random"
+    raw_dialogues_dir: "./datas/Yangqg_simulation_data"
+    prompt_dir: "./datas/cases_random"
   output:
     base_dir: "./intermediate"       # 所有中间文件均放在该目录下，自动加任务名
     final_output_dir: "./output_augmented_data"
