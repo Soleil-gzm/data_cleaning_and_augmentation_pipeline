@@ -1,3 +1,4 @@
+# configs/config_bucket_turn2.yaml
 dataset_path: __INPUT_FILE__
 export_path: __OUTPUT_FILE__
 text_keys: text
