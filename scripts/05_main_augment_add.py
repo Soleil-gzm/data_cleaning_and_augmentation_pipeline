@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """
-对话语义增强脚本（基于清洗后的 JSON）
+对话语义增强脚本（配置驱动版）
 读取最终训练数据 JSON，对每个对话中的指定轮次进行多步叠加增强，
 生成多个变体对话，输出新的 JSON/JSONL 文件（保留原始数据及 loss 标记）。
-
-日志机制：
-- 控制台只输出 INFO 及以上级别（任务开始、完成、统计汇总）
-- 详细 DEBUG 信息（每100个对话进度、保存文件路径等）写入日志文件
-- 增强过程中的异常会记录到日志，但不会中断任务
+支持 --config_json 参数，统一日志，动态路径。
 """
 
 import json
@@ -24,43 +20,33 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from common import augment_utils_add as aug_utils
 
-# ========== 配置 ==========
-DEFAULT_INPUT_ROOT = "intermediate/output_cleaning/final_training_data"
-OUTPUT_ROOT = "output_augmented_data"
-LOG_ROOT = "intermediate/logs_augmentation"          # 日志文件统一存放目录
-
-def setup_logger(log_dir, run_id):
-    """配置日志：文件记录 DEBUG 及以上，控制台只记录 INFO 及以上"""
-    log_dir = Path(log_dir)
+# ========== 日志配置 ==========
+def setup_logger(task_dir, run_id):
+    log_dir = task_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"augment_{run_id}.log"
-
-    logger = logging.getLogger("DialogueAugment")
-    # 避免重复添加 handler
-    if logger.handlers:
-        return logger
+    
+    logger = logging.getLogger("Augment")
     logger.setLevel(logging.DEBUG)
-
-    # 文件处理器：记录所有级别
+    if logger.handlers:
+        logger.handlers.clear()
+    
     fh = logging.FileHandler(log_file, encoding='utf-8')
     fh.setLevel(logging.DEBUG)
-
-    # 控制台处理器：只记录 INFO 及以上
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
-
+    
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
-
+    
     logger.addHandler(fh)
     logger.addHandler(ch)
-
     return logger
 
-def get_latest_final_run_id():
+def get_latest_final_run_id(final_root):
     """获取 final_training_data 下最新的 *_final 目录名"""
-    final_dir = Path(DEFAULT_INPUT_ROOT)
+    final_dir = Path(final_root)
     if not final_dir.exists():
         return None
     dirs = [d for d in final_dir.iterdir() if d.is_dir() and d.name.endswith("_final")]
@@ -79,7 +65,7 @@ def get_enhanceable_indices(messages, target_roles, only_loss_true):
         content = msg.get("content", "")
         if not content.strip():
             continue
-        if only_loss_true and role == "user" and msg.get("loss") != True:
+        if only_loss_true and role == "assistant" and msg.get("loss") != "True":
             continue
         indices.append(idx)
     return indices
@@ -114,15 +100,8 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
         try:
             new_dialogue = deepcopy(original_dialogue)
             new_messages = new_dialogue["messages"]
-
-            # k = rng.randint(min_turns, max_turns)
-            # if k > len(enhanceable):
-            #     k = len(enhanceable)
-            # selected = rng.sample(enhanceable, k)
-
-            # 增强所有可增强的位置
-            selected = enhanceable[:]   # 全部选择
-
+            # 增强所有可增强的位置（可根据需求改为随机选择）
+            selected = enhanceable[:]
             for idx in selected:
                 original_text = new_messages[idx].get("content", "")
                 if not original_text:
@@ -130,9 +109,6 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
                 variants_list = aug_utils.augment_cell_multi(original_text, **aug_kwargs)
                 if variants_list:
                     new_messages[idx]["content"] = variants_list[0]
-            # 添加元数据
-            # new_dialogue["_augmented_from"] = original_dialogue.get("id", None)
-            # new_dialogue["_variant_id"] = var_id
             variants.append(new_dialogue)
         except Exception as e:
             logger.error(f"对话 {dialog_id} 生成变体 {var_id} 失败: {e}", exc_info=True)
@@ -142,62 +118,94 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
 
 def main():
     parser = argparse.ArgumentParser()
-    ''' 语义增强参数运行: python scripts/05_main_augment_add.py --tag <augment_tag> [options]
-
-    # 只增强 loss=True 的 assistant，生成 5 个变体
-        python scripts/06_augment_dialogues.py --tag lossOnly --only_loss_true --num_variants 5
-
-        # 自适应变体数量，增强所有角色
-        python scripts/06_augment_dialogues.py --tag adaptive_all --adaptive_variants 
-    '''
-    parser.add_argument("--source_run_id", type=str, default=None,
-                        help="最终训练数据的 run_id (例如 20250421_153022_clean_default_final)")
+    parser.add_argument("--config_json", type=str, help="全局配置JSON字符串（优先级最高）")
+    parser.add_argument("--source_run_id", type=str, help="最终训练数据的 run_id (例如 20250421_153022_clean_default_final)")
+    parser.add_argument("--input_file", type=str, help="输入 JSON 文件路径（如果不使用 source_run_id）")
+    parser.add_argument("--output_dir", type=str, help="增强输出根目录")
+    parser.add_argument("--num_variants", type=int, default=3)
+    parser.add_argument("--min_turns", type=int, default=1)
+    parser.add_argument("--max_turns", type=int, default=2)
+    parser.add_argument("--target_roles", type=str, nargs='+', default=["user"])
+    parser.add_argument("--only_loss_true", action="store_true")
+    parser.add_argument("--adaptive_variants", action="store_true")
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--tag", type=str, default="default", help="增强任务标签")
-    parser.add_argument("--num_variants", type=int, default=3, help="每个原始对话生成的变体数量")
-    parser.add_argument("--min_turns", type=int, default=1, help="每个变体中最少增强轮次数")
-    parser.add_argument("--max_turns", type=int, default=2, help="每个变体中最少增强轮次数")
-    parser.add_argument("--target_roles", type=str, nargs='+', default=["user"],
-                        help="要增强的角色，可选 user/assistant")
-    parser.add_argument("--only_loss_true", action="store_true",
-                        help="是否只增强 loss=True 的 user 消息")
-    parser.add_argument("--adaptive_variants", action="store_true",
-                        help="根据可增强轮次数自动调整变体数量")
-    parser.add_argument("--seed", type=int, default=42, help="随机种子")
     args = parser.parse_args()
 
-    rng = random.Random(args.seed)
-
-    # 定位输入文件
-    if args.source_run_id:
-        input_dir = Path(DEFAULT_INPUT_ROOT) / args.source_run_id
-        if not input_dir.exists():
-            print(f"错误: 指定的最终数据目录不存在: {input_dir}")
+    # ---------- 参数解析 ----------
+    if args.config_json:
+        config = json.loads(args.config_json)
+        task_name = config['task_name']
+        base_dir = Path(config['paths']['output']['base_dir'])
+        task_dir = base_dir / task_name
+        step_cfg = config.get('steps', {}).get('05_augment', {})
+        
+        source_run_id = step_cfg.get('source_run_id') or args.source_run_id
+        output_dir = step_cfg.get('output_dir') or Path(config['paths']['output']['final_output_dir']) / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_augment_{step_cfg.get('tag', task_name)}"
+        num_variants = step_cfg.get('num_variants', args.num_variants)
+        min_turns = step_cfg.get('min_turns', args.min_turns)
+        max_turns = step_cfg.get('max_turns', args.max_turns)
+        target_roles = step_cfg.get('target_roles', args.target_roles)
+        only_loss_true = step_cfg.get('only_loss_true', args.only_loss_true)
+        adaptive_variants = step_cfg.get('adaptive_variants', args.adaptive_variants)
+        seed = step_cfg.get('seed', args.seed)
+        tag = step_cfg.get('tag', args.tag)
+        
+        # 确定输入文件
+        if source_run_id:
+            input_file = task_dir / "final_training_data" / source_run_id / "training_data.json"
+        else:
+            input_file = step_cfg.get('input_file') or (task_dir / "final_training_data" / get_latest_final_run_id(task_dir / "final_training_data") / "training_data.json")
+        if not input_file or not Path(input_file).exists():
+            logger.error(f"无法确定有效的输入文件，请提供 source_run_id 或 input_file")
             sys.exit(1)
-        input_file = input_dir / "training_data.json"
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 设置日志
+        logger = setup_logger(task_dir, f"{task_name}_augment")
+        logger.info(f"任务名称: {task_name}")
+        logger.info(f"任务目录: {task_dir}")
     else:
-        run_id = get_latest_final_run_id()
-        if run_id is None:
-            print("错误: 未找到最终训练数据，请先运行 04_apply_cleaned_loss_direct.py")
+        # 独立命令行模式
+        input_file = args.input_file
+        output_dir = args.output_dir
+        source_run_id = args.source_run_id
+        num_variants = args.num_variants
+        min_turns = args.min_turns
+        max_turns = args.max_turns
+        target_roles = args.target_roles
+        only_loss_true = args.only_loss_true
+        adaptive_variants = args.adaptive_variants
+        seed = args.seed
+        tag = args.tag
+        if not input_file and not source_run_id:
+            print("错误：独立模式需要提供 --input_file 或 --source_run_id")
             sys.exit(1)
-        input_file = Path(DEFAULT_INPUT_ROOT) / run_id / "training_data.json"
-        print(f"自动选择最新数据: {run_id}")
+        if not output_dir:
+            print("错误：独立模式需要提供 --output_dir")
+            sys.exit(1)
+        if source_run_id and not input_file:
+            # 尝试根据 source_run_id 推断路径
+            base = Path("intermediate/final_training_data")
+            input_file = base / source_run_id / "training_data.json"
+            if not input_file.exists():
+                print(f"错误：根据 source_run_id 推断的文件不存在: {input_file}")
+                sys.exit(1)
+        input_file = Path(input_file)
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # 独立模式简单日志
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logger = logging.getLogger("Augment")
+        task_dir = input_file.parent.parent  # 推测
 
-    if not input_file.exists():
-        print(f"错误: 输入文件不存在: {input_file}")
-        sys.exit(1)
+    rng = random.Random(seed)
 
-    # 输出目录
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_id = f"{timestamp}_augment_{args.tag}"
-    output_dir = Path(OUTPUT_ROOT) / run_id
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # 配置日志（日志文件统一放在 LOG_ROOT 下）
-    logger = setup_logger(LOG_ROOT, run_id)
     logger.info("=== 对话语义增强任务开始 ===")
     logger.info(f"输入文件: {input_file}")
     logger.info(f"输出目录: {output_dir}")
-    logger.info(f"增强参数: {vars(args)}")
+    logger.info(f"增强参数: num_variants={num_variants}, min_turns={min_turns}, max_turns={max_turns}, target_roles={target_roles}, only_loss_true={only_loss_true}, adaptive_variants={adaptive_variants}, seed={seed}")
 
     # 加载原始数据
     logger.info("加载原始数据...")
@@ -211,12 +219,12 @@ def main():
 
     # 增强配置
     config = {
-        "num_variants_per_dialogue": args.num_variants,
-        "min_enhance_turns": args.min_turns,
-        "max_enhance_turns": args.max_turns,
-        "target_roles": args.target_roles,
-        "only_loss_true": args.only_loss_true,
-        "adaptive_variants": args.adaptive_variants,
+        "num_variants_per_dialogue": num_variants,
+        "min_enhance_turns": min_turns,
+        "max_enhance_turns": max_turns,
+        "target_roles": target_roles,
+        "only_loss_true": only_loss_true,
+        "adaptive_variants": adaptive_variants,
         "augment_kwargs": {
             "num_variants": 1,
             "min_steps": 2,
@@ -247,6 +255,7 @@ def main():
         logger.warning(f"有 {len(failed_dialogues)} 个对话增强失败: {failed_dialogues[:10]}{'...' if len(failed_dialogues)>10 else ''}")
 
     # 保存 JSON
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_json = output_dir / f"augmented_data_{timestamp}.json"
     logger.debug(f"保存 JSON 文件: {output_json}")
     with open(output_json, 'w', encoding='utf-8') as f:
@@ -261,10 +270,9 @@ def main():
 
     # 保存元数据
     metadata = {
-        "run_id": run_id,
+        "run_id": f"{timestamp}_augment_{tag}",
         "task": "augment",
-        "source_run_id": input_file.parent.name,
-        "source_path": str(input_file),
+        "source_file": str(input_file),
         "command_line": " ".join(sys.argv),
         "config": config,
         "statistics": {
@@ -280,7 +288,6 @@ def main():
         json.dump(metadata, f, indent=2)
 
     logger.info(f"增强任务完成，结果保存在: {output_dir}")
-    # 控制台输出简洁信息
     print(f"\n增强完成！")
     print(f"  原始对话: {len(original_data)}")
     print(f"  生成变体: {total_variants}")
