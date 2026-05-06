@@ -268,6 +268,33 @@ def main():
         for d in all_dialogues:
             f.write(json.dumps(d, ensure_ascii=False) + '\n')
 
+    # # 分离原始数据和变体数据
+    # original_count = len(original_data)
+    # variants_only = all_dialogues[original_count:]   # 只取变体部分
+
+    # # 1. 保存合并文件（原始 + 变体）
+    # combined_json = output_dir / f"combined_augmented_{timestamp}.json"
+    # combined_jsonl = output_dir / f"combined_augmented_{timestamp}.jsonl"
+
+    # with open(combined_json, 'w', encoding='utf-8') as f:
+    #     json.dump(all_dialogues, f, ensure_ascii=False, indent=2)
+    # with open(combined_jsonl, 'w', encoding='utf-8') as f:
+    #     for d in all_dialogues:
+    #         f.write(json.dumps(d, ensure_ascii=False) + '\n')
+
+    # # 2. 保存仅变体文件（只含增强生成的对话）
+    # variants_json = output_dir / f"variants_only_{timestamp}.json"
+    # variants_jsonl = output_dir / f"variants_only_{timestamp}.jsonl"
+
+    # with open(variants_json, 'w', encoding='utf-8') as f:
+    #     json.dump(variants_only, f, ensure_ascii=False, indent=2)
+    # with open(variants_jsonl, 'w', encoding='utf-8') as f:
+    #     for d in variants_only:
+    #         f.write(json.dumps(d, ensure_ascii=False) + '\n')
+
+    # logger.info(f"合并文件（原始+变体）已保存: {combined_json}, {combined_jsonl}")
+    # logger.info(f"仅变体文件已保存: {variants_json}, {variants_jsonl}")
+
     # 保存元数据
     metadata = {
         "run_id": f"{timestamp}_augment_{tag}",
