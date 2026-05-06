@@ -33,6 +33,8 @@ steps:
     script: "scripts/01_split_dialogues.py"
     batch_size: 120000               # 每个 JSONL 文件包含的最大对话数
     # 以下参数可选
+    # 这里使用已有的数据，还需要修改04脚本的original_json路径保持一致
+    input_json: ./datas/raw_data/data-simulation-4809-modify.json                 # null可选，覆盖 raw_dialogues.json 路径
     input_json: null                 # 可选，覆盖 raw_dialogues.json 路径
     output_dir: null                 # 可选，样本输出目录（默认 {base_dir}/{task_name}/samples）
     stats_dir: null                  # 可选，轮次统计输出目录（默认 {base_dir}/{task_name}/stats）
@@ -41,7 +43,7 @@ steps:
   02_bucket:
     enabled: true
     script: "scripts/02_split_into_buckets.py"
-    # 分桶策略：auto（自动，推荐）、percentile、equal_count、manual
+    # 分桶策略：auto（自动，也就是percentile，推荐）、percentile、equal_count、manual
     strategy: "auto"                 # 需要修改（通常用 auto）
     # 自动分桶参数（仅当 strategy 为 auto/percentile/equal_count 时生效）
     auto_params:
