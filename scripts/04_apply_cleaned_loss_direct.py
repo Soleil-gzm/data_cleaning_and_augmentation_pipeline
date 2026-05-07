@@ -3,7 +3,7 @@
 应用清洗结果，生成最终训练 JSON（配置驱动版）
 根据 cleaned_jsonl 中保留的 (id, turn) 对，将原始 JSON 中对应 assistant 的 loss 设为 True，其余设为 False。
 支持自动获取最新清洗结果或手动指定 run_id。
-输出目录：final_training_data/{source_run_id}_final/training_data.json
+输出目录：final_training_data/{source_run_id}_final/cleaned_training_data.json
 """
 
 import json
@@ -16,10 +16,10 @@ from collections import defaultdict
 from datetime import datetime
 
 # ========== 日志配置 ==========
-def setup_logger(task_dir, run_id):
+def setup_logger(task_dir, run_id):     # 用于区分同任务下的不同清洗尝试。
     log_dir = task_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"finalize_{run_id}.log"
+    log_file = log_dir / f"04_write_loss_{run_id}.log"
     
     logger = logging.getLogger("Finalize")
     logger.setLevel(logging.DEBUG)

@@ -25,7 +25,7 @@ def setup_logger(log_dir, task_name):
     """配置日志：文件记录 DEBUG，控制台 INFO"""
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"split_{task_name}.log"
+    log_file = log_dir / f"01_split_dialogues_{task_name}.log"
     
     logger = logging.getLogger("SplitDialogues")
     logger.setLevel(logging.DEBUG)

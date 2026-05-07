@@ -26,7 +26,7 @@ from common import augment_utils_add as aug_utils
 def setup_logger(task_dir, run_id):
     log_dir = task_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"augment_{run_id}.log"
+    log_file = log_dir / f"05_augment_{run_id}.log"
     
     logger = logging.getLogger("Augment")
     logger.setLevel(logging.DEBUG)
@@ -155,7 +155,7 @@ def main():
         if source_run_id:
             input_file = task_dir / "final_training_data" / source_run_id / "training_data.json"
         else:
-            input_file = step_cfg.get('input_file') or (task_dir / "final_training_data" / get_latest_final_run_id(task_dir / "final_training_data") / "training_data.json")
+            input_file = step_cfg.get('input_file') or (task_dir / "final_training_data" / get_latest_final_run_id(task_dir / "final_training_data") / "cleaned_training_data.json")
         if not input_file or not Path(input_file).exists():
             # 需要提前定义logger，否则报错
             tmp_logger = logging.getLogger("Augment")

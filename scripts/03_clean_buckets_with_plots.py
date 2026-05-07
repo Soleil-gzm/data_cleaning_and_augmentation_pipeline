@@ -35,7 +35,7 @@ def setup_logger(task_dir, run_id):
     """配置日志：文件记录 DEBUG，控制台 INFO"""
     log_dir = task_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"clean_{run_id}.log"
+    log_file = log_dir / f"03_clean_{run_id}.log"
     
     logger = logging.getLogger("CleanBuckets")
     logger.setLevel(logging.DEBUG)

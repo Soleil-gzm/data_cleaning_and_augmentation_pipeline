@@ -19,7 +19,7 @@ from collections import defaultdict
 def setup_logger(task_dir, task_name):
     log_dir = task_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"bucket_{task_name}.log"
+    log_file = log_dir / f"02_split_bucket_{task_name}.log"
 
     logger = logging.getLogger("BucketSplit")
     logger.setLevel(logging.DEBUG)
