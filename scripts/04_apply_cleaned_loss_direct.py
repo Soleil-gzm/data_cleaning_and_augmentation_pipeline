@@ -158,7 +158,7 @@ def main():
     # 输出目录
     output_dir = Path(output_root) / f"{run_id}_final"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / "training_data.json"
+    output_file = output_dir / "cleaned_training_data.json"
 
     # 加载原始对话
     original_path = Path(original_json)

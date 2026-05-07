@@ -2,7 +2,9 @@
 """
 对话语义增强脚本（配置驱动版）
 读取最终训练数据 JSON，对每个对话中的指定轮次进行多步叠加增强，
-生成多个变体对话，输出新的 JSON/JSONL 文件（保留原始数据及 loss 标记）。
+生成多个变体对话，输出：
+  1. combined_augmented_xxx.json/jsonl : 原始+变体
+  2. variants_only_xxx.json/jsonl     : 仅变体
 支持 --config_json 参数，统一日志，动态路径。
 """
 
@@ -92,8 +94,6 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
     if config["adaptive_variants"]:
         num_variants = max(1, min(5, len(enhanceable) // 2))
 
-    min_turns = config["min_enhance_turns"]
-    max_turns = config["max_enhance_turns"]
     aug_kwargs = config["augment_kwargs"]
 
     for var_id in range(num_variants):
@@ -157,7 +157,9 @@ def main():
         else:
             input_file = step_cfg.get('input_file') or (task_dir / "final_training_data" / get_latest_final_run_id(task_dir / "final_training_data") / "training_data.json")
         if not input_file or not Path(input_file).exists():
-            logger.error(f"无法确定有效的输入文件，请提供 source_run_id 或 input_file")
+            # 需要提前定义logger，否则报错
+            tmp_logger = logging.getLogger("Augment")
+            tmp_logger.error(f"无法确定有效的输入文件，请提供 source_run_id 或 input_file")
             sys.exit(1)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -186,7 +188,6 @@ def main():
             print("错误：独立模式需要提供 --output_dir")
             sys.exit(1)
         if source_run_id and not input_file:
-            # 尝试根据 source_run_id 推断路径
             base = Path("intermediate/final_training_data")
             input_file = base / source_run_id / "training_data.json"
             if not input_file.exists():
@@ -195,10 +196,9 @@ def main():
         input_file = Path(input_file)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        # 独立模式简单日志
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         logger = logging.getLogger("Augment")
-        task_dir = input_file.parent.parent  # 推测
+        task_dir = input_file.parent.parent
 
     rng = random.Random(seed)
 
@@ -218,7 +218,7 @@ def main():
     logger.info(f"原始对话数量: {len(original_data)}")
 
     # 增强配置
-    config = {
+    enhance_config = {
         "num_variants_per_dialogue": num_variants,
         "min_enhance_turns": min_turns,
         "max_enhance_turns": max_turns,
@@ -239,7 +239,7 @@ def main():
     for idx, dialogue in enumerate(original_data):
         all_dialogues.append(dialogue)  # 保留原始
         try:
-            variants = enhance_dialogue(dialogue, config, rng, logger, idx)
+            variants = enhance_dialogue(dialogue, enhance_config, rng, logger, idx)
             all_dialogues.extend(variants)
             total_variants += len(variants)
         except Exception as e:
@@ -254,64 +254,60 @@ def main():
     if failed_dialogues:
         logger.warning(f"有 {len(failed_dialogues)} 个对话增强失败: {failed_dialogues[:10]}{'...' if len(failed_dialogues)>10 else ''}")
 
-    # 保存 JSON
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_json = output_dir / f"augmented_data_{timestamp}.json"
-    logger.debug(f"保存 JSON 文件: {output_json}")
-    with open(output_json, 'w', encoding='utf-8') as f:
+    # ---------- 保存文件：合并（原始+变体）和仅变体 ----------
+    # 分离原始数据和变体数据
+    original_count = len(original_data)
+    variants_only = all_dialogues[original_count:]   # 只取变体部分
+
+    # 生成时间戳（用于文件名）
+    save_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # 1. 保存合并文件（原始 + 变体）
+    combined_json = output_dir / f"combined_augmented_{save_timestamp}.json"
+    combined_jsonl = output_dir / f"combined_augmented_{save_timestamp}.jsonl"
+
+    logger.debug(f"保存合并 JSON 文件: {combined_json}")
+    with open(combined_json, 'w', encoding='utf-8') as f:
         json.dump(all_dialogues, f, ensure_ascii=False, indent=2)
 
-    # 保存 JSONL
-    output_jsonl = output_dir / f"augmented_data_{timestamp}.jsonl"
-    logger.debug(f"保存 JSONL 文件: {output_jsonl}")
-    with open(output_jsonl, 'w', encoding='utf-8') as f:
+    logger.debug(f"保存合并 JSONL 文件: {combined_jsonl}")
+    with open(combined_jsonl, 'w', encoding='utf-8') as f:
         for d in all_dialogues:
             f.write(json.dumps(d, ensure_ascii=False) + '\n')
 
-    # # 分离原始数据和变体数据
-    # original_count = len(original_data)
-    # variants_only = all_dialogues[original_count:]   # 只取变体部分
+    # 2. 保存仅变体文件（只含增强生成的对话）
+    variants_json = output_dir / f"variants_only_{save_timestamp}.json"
+    variants_jsonl = output_dir / f"variants_only_{save_timestamp}.jsonl"
 
-    # # 1. 保存合并文件（原始 + 变体）
-    # combined_json = output_dir / f"combined_augmented_{timestamp}.json"
-    # combined_jsonl = output_dir / f"combined_augmented_{timestamp}.jsonl"
+    with open(variants_json, 'w', encoding='utf-8') as f:
+        json.dump(variants_only, f, ensure_ascii=False, indent=2)
+    with open(variants_jsonl, 'w', encoding='utf-8') as f:
+        for d in variants_only:
+            f.write(json.dumps(d, ensure_ascii=False) + '\n')
 
-    # with open(combined_json, 'w', encoding='utf-8') as f:
-    #     json.dump(all_dialogues, f, ensure_ascii=False, indent=2)
-    # with open(combined_jsonl, 'w', encoding='utf-8') as f:
-    #     for d in all_dialogues:
-    #         f.write(json.dumps(d, ensure_ascii=False) + '\n')
+    logger.info(f"合并文件（原始+变体）已保存: {combined_json}, {combined_jsonl}")
+    logger.info(f"仅变体文件已保存: {variants_json}, {variants_jsonl}")
 
-    # # 2. 保存仅变体文件（只含增强生成的对话）
-    # variants_json = output_dir / f"variants_only_{timestamp}.json"
-    # variants_jsonl = output_dir / f"variants_only_{timestamp}.jsonl"
-
-    # with open(variants_json, 'w', encoding='utf-8') as f:
-    #     json.dump(variants_only, f, ensure_ascii=False, indent=2)
-    # with open(variants_jsonl, 'w', encoding='utf-8') as f:
-    #     for d in variants_only:
-    #         f.write(json.dumps(d, ensure_ascii=False) + '\n')
-
-    # logger.info(f"合并文件（原始+变体）已保存: {combined_json}, {combined_jsonl}")
-    # logger.info(f"仅变体文件已保存: {variants_json}, {variants_jsonl}")
-
-    # 保存元数据
+    # ---------- 保存元数据 ----------
     metadata = {
-        "run_id": f"{timestamp}_augment_{tag}",
+        "run_id": f"{save_timestamp}_augment_{tag}",
         "task": "augment",
         "source_file": str(input_file),
         "command_line": " ".join(sys.argv),
-        "config": config,
+        "config": enhance_config,
         "statistics": {
             "original_dialogues": len(original_data),
             "generated_variants": total_variants,
             "total_dialogues": len(all_dialogues),
             "failed_dialogues": failed_dialogues
         },
-        "output_files": [str(output_json), str(output_jsonl)]
+        "output_files": {
+            "combined": [str(combined_json), str(combined_jsonl)],
+            "variants_only": [str(variants_json), str(variants_jsonl)]
+        }
     }
     metadata_path = output_dir / "run_metadata.json"
-    with open(metadata_path, 'w') as f:
+    with open(metadata_path, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2)
 
     logger.info(f"增强任务完成，结果保存在: {output_dir}")
