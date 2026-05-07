@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-分桶脚本（配置驱动版）
+分桶脚本（配置驱动版，支持自动清理旧桶）
 从 samples 目录读取 JSONL 文件，按 turn 值分桶输出。
 支持自动分桶（基于轮次分布百分位或等频）和手动分桶。
-支持 --config_json 从全局配置读取参数，也支持独立命令行参数。
+每次运行前自动清空输出目录，避免数据累积。
 """
 
 import json
@@ -11,6 +11,7 @@ import os
 import sys
 import argparse
 import logging
+import shutil
 from pathlib import Path
 from collections import defaultdict
 
@@ -38,9 +39,7 @@ def setup_logger(task_dir, task_name):
     logger.addHandler(ch)
     return logger
 
-# ========== 桶边界生成函数 ==========
 def load_turn_distribution(stats_dir):
-    """从 stats_dir/turn_distribution.json 加载轮次统计"""
     stats_file = Path(stats_dir) / "turn_distribution.json"
     if not stats_file.exists():
         raise FileNotFoundError(f"未找到轮次统计文件: {stats_file}")
@@ -49,20 +48,12 @@ def load_turn_distribution(stats_dir):
     return {int(k): v for k, v in data.get('turn_distribution', {}).items()}
 
 def auto_buckets_from_distribution(turn_dist, strategy, params=None):
-    """
-    根据轮次分布自动生成桶边界
-    :param turn_dist: dict {turn: count}
-    :param strategy: "percentile" 或 "equal_count"
-    :param params: 对应参数字典
-    :return: list of (low, high) 边界，high 可为 float('inf')
-    """
     turns = sorted(turn_dist.keys())
     counts = [turn_dist[t] for t in turns]
     total = sum(counts)
     
     if strategy == "percentile":
         percentiles = params.get('percentiles', [0, 25, 50, 75, 90, 95, 100])
-        # 计算累计比例
         cumulative = []
         running = 0
         for cnt in counts:
@@ -71,7 +62,6 @@ def auto_buckets_from_distribution(turn_dist, strategy, params=None):
         boundaries = set()
         for p in percentiles:
             target = p / 100.0
-            # 找到第一个累计比例 >= target 的 turn
             for i, cum in enumerate(cumulative):
                 if cum >= target:
                     boundaries.add(turns[i])
@@ -83,9 +73,7 @@ def auto_buckets_from_distribution(turn_dist, strategy, params=None):
             high = boundaries[i+1] - 1 if boundaries[i+1] > boundaries[i] else boundaries[i]
             if low <= high:
                 buckets.append((low, high))
-        # 最后一个桶到无穷
-        last = boundaries[-1]
-        buckets.append((last, float('inf')))
+        buckets.append((boundaries[-1], float('inf')))
         return buckets
 
     elif strategy == "equal_count":
@@ -106,7 +94,6 @@ def auto_buckets_from_distribution(turn_dist, strategy, params=None):
         raise ValueError(f"未知自动分桶策略: {strategy}")
 
 def get_bucket_name(bucket_idx, low, high):
-    """生成桶目录名"""
     if high == float('inf'):
         return f"bucket_{low}_plus"
     elif low == high:
@@ -115,43 +102,36 @@ def get_bucket_name(bucket_idx, low, high):
         return f"bucket_{low}_{high}"
 
 def get_bucket_for_turn(turn, buckets):
-    """根据桶边界列表，返回桶索引和桶名"""
     for idx, (low, high) in enumerate(buckets):
         if low <= turn <= high:
             return idx, get_bucket_name(idx, low, high)
     return None, None
 
-# ========== 主函数 ==========
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_json", type=str, help="全局配置JSON字符串（优先级最高）")
+    parser.add_argument("--config_json", type=str, help="全局配置JSON字符串")
     parser.add_argument("--samples_dir", type=str, help="samples目录路径")
     parser.add_argument("--output_base", type=str, help="输出桶根目录")
     parser.add_argument("--strategy", type=str, choices=['auto', 'manual', 'percentile', 'equal_count'], default='auto')
     parser.add_argument("--auto_params", type=str, help="自动分桶参数JSON")
-    parser.add_argument("--manual_buckets", type=str, help="手动桶边界JSON，如 '[[0,0],[1,2],[3,5]]'")
+    parser.add_argument("--manual_buckets", type=str, help="手动桶边界JSON")
     args = parser.parse_args()
 
-    # ---------- 参数解析 ----------
     if args.config_json:
         config = json.loads(args.config_json)
         task_name = config['task_name']
         base_dir = Path(config['paths']['output']['base_dir'])
         task_dir = base_dir / task_name
         step_cfg = config.get('steps', {}).get('02_bucket', {})
-
         samples_dir = step_cfg.get('samples_dir') or (task_dir / "samples")
         output_base = step_cfg.get('output_base') or (task_dir / "bucketed")
         strategy = step_cfg.get('strategy', 'auto')
         auto_params = step_cfg.get('auto_params', {})
         manual_buckets = step_cfg.get('manual_buckets', [])
-
-        # 设置日志
         logger = setup_logger(task_dir, task_name)
         logger.info(f"任务名称: {task_name}")
         logger.info(f"任务目录: {task_dir}")
     else:
-        # 独立命令行模式
         samples_dir = args.samples_dir
         output_base = args.output_base
         strategy = args.strategy
@@ -160,18 +140,30 @@ def main():
         if not samples_dir or not output_base:
             print("错误：独立模式需要提供 --samples_dir 和 --output_base")
             sys.exit(1)
-        # 独立模式简单日志
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         logger = logging.getLogger("BucketSplit")
-        task_dir = Path(samples_dir).parent  # 推测
+        task_dir = Path(samples_dir).parent
 
     samples_dir = Path(samples_dir)
     output_base = Path(output_base)
     output_base.mkdir(parents=True, exist_ok=True)
+
+    # ========== 新增：清空旧的桶内容 ==========
+    logger.info(f"清空旧的分桶目录: {output_base}")
+    for item in output_base.iterdir():
+        try:
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+        except Exception as e:
+            logger.warning(f"删除 {item} 失败: {e}")
+    # ========================================
+
     logger.info(f"样本目录: {samples_dir}")
     logger.info(f"输出根目录: {output_base}")
 
-    # 获取轮次分布（自动模式需要）
+    # 加载轮次分布（自动模式需要）
     if strategy in ['auto', 'percentile', 'equal_count']:
         stats_dir = task_dir / "stats" if 'task_dir' in locals() else samples_dir.parent / "stats"
         if not stats_dir.exists():
@@ -184,7 +176,6 @@ def main():
 
     # 生成桶边界
     if strategy == 'auto':
-        # 默认使用百分位策略
         actual_strategy = 'percentile'
         params = auto_params if auto_params else {'percentiles': [0, 25, 50, 75, 90, 95, 100]}
         buckets = auto_buckets_from_distribution(turn_dist, actual_strategy, params)
@@ -202,15 +193,12 @@ def main():
         logger.error(f"不支持的分桶策略: {strategy}")
         sys.exit(1)
 
-    # 为每个桶创建目录并清空
+    # 创建桶目录（已经清空过，直接新建）
     bucket_dirs = {}
     for idx, (low, high) in enumerate(buckets):
         bucket_name = get_bucket_name(idx, low, high)
         bucket_dir = output_base / bucket_name
         bucket_dir.mkdir(exist_ok=True)
-        # 清空旧文件（可选）
-        for f in bucket_dir.glob("*.jsonl"):
-            f.unlink()
         bucket_dirs[bucket_name] = bucket_dir
     logger.info(f"创建了 {len(bucket_dirs)} 个桶目录")
 
@@ -235,7 +223,7 @@ def main():
                     turn = data.get('turn')
                     if turn is None:
                         continue
-                    bucket_idx, bucket_name = get_bucket_for_turn(turn, buckets)
+                    _, bucket_name = get_bucket_for_turn(turn, buckets)
                     if bucket_name is None:
                         logger.warning(f"turn {turn} 未匹配到任何桶，跳过")
                         continue
