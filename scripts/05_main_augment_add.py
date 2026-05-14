@@ -66,8 +66,15 @@ def get_enhanceable_indices(messages, target_roles, only_loss_true):
         content = msg.get("content", "")
         if not content.strip():
             continue
-        if only_loss_true and role == "assistant" and msg.get("loss") != "True":
-            continue
+        if only_loss_true:
+            # 只增强 loss=True 的消息（注意 loss 可能是布尔值 True/False 或字符串 "True"/"False"）
+            loss_val = msg.get("loss")
+            if isinstance(loss_val, str):
+                loss_val = loss_val.lower() == "true"
+            elif not isinstance(loss_val, bool):
+                loss_val = False
+            if not loss_val:
+                continue
         indices.append(idx)
     return indices
 
@@ -89,6 +96,8 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
         logger.debug(f"对话 {dialog_id} 无可增强轮次")
         return variants
 
+    logger.debug(f"对话 {dialog_id} 可增强位置索引: {enhanceable}")
+
     num_variants = config["num_variants_per_dialogue"]
     if config["adaptive_variants"]:
         num_variants = max(1, min(5, len(enhanceable) // 2))
@@ -99,15 +108,17 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
         try:
             new_dialogue = deepcopy(original_dialogue)
             new_messages = new_dialogue["messages"]
-            # 增强所有可增强的位置（可根据需求改为随机选择）
-            selected = enhanceable[:]
+            selected = enhanceable[:]  # 全部选择（可改为随机选择部分）
             for idx in selected:
                 original_text = new_messages[idx].get("content", "")
                 if not original_text:
                     continue
                 variants_list = aug_utils.augment_cell_multi(original_text, **aug_kwargs)
-                if variants_list:
+                if variants_list and variants_list[0] != original_text:
                     new_messages[idx]["content"] = variants_list[0]
+                    logger.debug(f"  增强: [{original_text}] -> [{variants_list[0]}]")
+                else:
+                    logger.debug(f"  增强未产生变化: [{original_text}]")
             variants.append(new_dialogue)
         except Exception as e:
             logger.error(f"对话 {dialog_id} 生成变体 {var_id} 失败: {e}", exc_info=True)
@@ -140,10 +151,8 @@ def main():
         step_cfg = config.get('steps', {}).get('05_augment', {})
         
         source_run_id = step_cfg.get('source_run_id') or args.source_run_id
-        # 确定输出目录
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         default_output_dir = task_dir / "output_augmented_data" / f"{timestamp}_augment_{step_cfg.get('tag', task_name)}"
-        # 优先使用配置中的 output_dir，否则使用默认目录
         output_dir_str = step_cfg.get('output_dir')
         if output_dir_str:
             output_dir = Path(output_dir_str)
@@ -241,15 +250,17 @@ def main():
         }
     }
 
-    all_dialogues = []
+    # 分别收集原始和变体
+    all_original = []
+    all_variants = []
     total_variants = 0
     failed_dialogues = []
 
     for idx, dialogue in enumerate(original_data):
-        all_dialogues.append(dialogue)  # 保留原始
+        all_original.append(dialogue)
         try:
             variants = enhance_dialogue(dialogue, enhance_config, rng, logger, idx)
-            all_dialogues.extend(variants)
+            all_variants.extend(variants)
             total_variants += len(variants)
         except Exception as e:
             logger.error(f"对话 {idx} 增强过程出现未捕获异常: {e}", exc_info=True)
@@ -259,24 +270,21 @@ def main():
         if (idx + 1) % 100 == 0:
             logger.debug(f"已处理 {idx+1}/{len(original_data)} 个对话，生成 {total_variants} 个变体")
 
+    # 合并所有对话
+    all_dialogues = all_original + all_variants
     logger.info(f"增强完成: 原始 {len(original_data)}，变体 {total_variants}，总计 {len(all_dialogues)}")
     if failed_dialogues:
         logger.warning(f"有 {len(failed_dialogues)} 个对话增强失败: {failed_dialogues[:10]}{'...' if len(failed_dialogues)>10 else ''}")
 
-    # ---------- 保存文件：合并（原始+变体）和仅变体 ----------
-    original_count = len(original_data)
-    variants_only = all_dialogues[original_count:]
-
+    # 保存文件
     save_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     combined_json = output_dir / f"combined_augmented_{save_timestamp}.json"
     combined_jsonl = output_dir / f"combined_augmented_{save_timestamp}.jsonl"
 
-    logger.debug(f"保存合并 JSON 文件: {combined_json}")
     with open(combined_json, 'w', encoding='utf-8') as f:
         json.dump(all_dialogues, f, ensure_ascii=False, indent=2)
 
-    logger.debug(f"保存合并 JSONL 文件: {combined_jsonl}")
     with open(combined_jsonl, 'w', encoding='utf-8') as f:
         for d in all_dialogues:
             f.write(json.dumps(d, ensure_ascii=False) + '\n')
@@ -285,15 +293,15 @@ def main():
     variants_jsonl = output_dir / f"variants_only_{save_timestamp}.jsonl"
 
     with open(variants_json, 'w', encoding='utf-8') as f:
-        json.dump(variants_only, f, ensure_ascii=False, indent=2)
+        json.dump(all_variants, f, ensure_ascii=False, indent=2)
     with open(variants_jsonl, 'w', encoding='utf-8') as f:
-        for d in variants_only:
+        for d in all_variants:
             f.write(json.dumps(d, ensure_ascii=False) + '\n')
 
     logger.info(f"合并文件（原始+变体）已保存: {combined_json}, {combined_jsonl}")
     logger.info(f"仅变体文件已保存: {variants_json}, {variants_jsonl}")
 
-    # ---------- 保存元数据 ----------
+    # 元数据
     metadata = {
         "run_id": f"{save_timestamp}_augment_{tag}",
         "task": "augment",

@@ -4,8 +4,8 @@
 # ============================================================
 
 # ------------------- 基础任务信息 -------------------
-task_name: "task_null_aug"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
-resume: false                      # 是否启用断点续跑（true=跳过已完成步骤）
+task_name: "task_yang"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
+resume: true                      # 是否启用断点续跑（true=跳过已完成步骤）
 
 # ------------------- 原始数据路径 -------------------
 paths:
@@ -20,7 +20,7 @@ paths:
 steps:
   # ----- 步骤00：生成原始对话JSON -----
   00_generate_raw:
-    enabled: false                    # 是否启用该步骤
+    enabled: true                    # 是否启用该步骤
     script: "scripts/00_dataset_process.py"
     # 以下参数可选，若不填则自动根据 paths.input 和 base_dir 派生
     raw_dir: null                    # 可选，覆盖 paths.input.raw_dialogues_dir
@@ -29,7 +29,7 @@ steps:
 
   # ----- 步骤01：拆分为单轮样本 -----
   01_split:
-    enabled: false
+    enabled: true
     script: "scripts/01_split_dialogues.py"
     batch_size: 120000               # 每个 JSONL 文件包含的最大对话数
     # 以下参数可选
@@ -41,7 +41,7 @@ steps:
 
   # ----- 步骤02：按轮次分桶 -----
   02_bucket:
-    enabled: false
+    enabled: true
     script: "scripts/02_split_into_buckets.py"
     # 分桶策略：auto（自动，推荐）、percentile、equal_count、manual
     strategy: "manual"                 # 需要修改（通常用 auto）
@@ -60,7 +60,7 @@ steps:
 
   # ----- 步骤03：调用 Data-Juicer 清洗每个桶 -----
   03_clean:
-    enabled: false
+    enabled: true
     script: "scripts/03_clean_buckets_with_plots.py"
     configs_dir: "configs/configs_qa"    # 需要修改：存放清洗配置文件（YAML）的目录
     tag: "default"                       # 需要修改：清洗任务标签（用于输出子目录命名）
@@ -84,7 +84,7 @@ steps:
 
   # ----- 步骤04：应用清洗结果，生成最终训练数据 -----
   04_finalize:
-    enabled: false
+    enabled: true
     script: "scripts/04_apply_cleaned_loss_direct.py"
     source_run_id: null                # 可选，指定清洗步骤的 run_id（如 "20250430_143022_clean_default"），不填则自动取最新
     # 以下参数可选

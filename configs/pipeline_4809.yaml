@@ -1,0 +1,115 @@
+# ============================================================
+# 数据清洗与增强流水线配置文件（模板）
+# 使用说明：复制此文件并重命名为 task_xxx_config.yaml，然后修改带“需要修改”标记的字段
+# ============================================================
+
+# ------------------- 基础任务信息 -------------------
+task_name: "task_4809"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
+resume: true                      # 是否启用断点续跑（true=跳过已完成步骤）
+
+# ------------------- 原始数据路径 -------------------
+paths:
+  input:
+    raw_dialogues_dir: "./datas/Yangqg_simulation_data"   # 需要修改：存放 .doc/.docx 对话文件的目录
+    prompt_dir: "./datas/cases_random"                    # 需要修改：存放 case_*.txt 提示文件的目录
+  output:
+    base_dir: "./intermediate"                           # 所有中间输出的根目录（会自动追加 task_name）
+    final_output_dir: "./output_augmented_data/{task_name}"          # 增强最终数据的输出目录
+
+# ------------------- 各步骤配置（通常只需修改路径和策略） -------------------
+steps:
+  # ----- 步骤00：生成原始对话JSON -----
+  00_generate_raw:
+    enabled: false                    # 是否启用该步骤
+    script: "scripts/00_dataset_process.py"
+    # 以下参数可选，若不填则自动根据 paths.input 和 base_dir 派生
+    raw_dir: null                    # 可选，覆盖 paths.input.raw_dialogues_dir
+    prompt_dir: null                 # 可选，覆盖 paths.input.prompt_dir
+    output_file: null                # 可选，例如 "./intermediate/{task_name}/raw_dialogues.json"
+
+  # ----- 步骤01：拆分为单轮样本 -----
+  01_split:
+    enabled: true
+    script: "scripts/01_split_dialogues.py"
+    batch_size: 120000               # 每个 JSONL 文件包含的最大对话数
+    # 以下参数可选
+    # input_json: null                 # 可选，覆盖 raw_dialogues.json 路径
+    # 这里使用已有的数据，还需要修改04脚本的original_json路径保持一致
+    input_json: ./datas/raw_data/data-simulation-4809-modify.json                 # null可选，覆盖 raw_dialogues.json 路径
+    output_dir: null                 # 可选，样本输出目录（默认 {base_dir}/{task_name}/samples）
+    stats_dir: null                  # 可选，轮次统计输出目录（默认 {base_dir}/{task_name}/stats）
+
+  # ----- 步骤02：按轮次分桶 -----
+  02_bucket:
+    enabled: true
+    script: "scripts/02_split_into_buckets.py"
+    # 分桶策略：auto（自动，推荐）、percentile、equal_count、manual
+    strategy: "manual"                 # 需要修改（通常用 auto）
+    # 自动分桶参数（仅当 strategy 为 auto/percentile/equal_count 时生效）
+    auto_params:
+      # 百分位策略参数（strategy=percentile 或 auto 时）
+      percentiles: [0, 25, 50, 75, 90, 95, 100]   # 需要修改：可根据需要调整分位点
+      # 等频策略参数（strategy=equal_count 时）
+      # min_bucket_size: 5000
+    # 手动桶边界（仅当 strategy=manual 时使用）
+    # 例如: [[0,0], [1,2], [3,5], [6,10], [11,20], [21,999]]
+    # 以下参数可选
+    manual_buckets: [[0,0],[1,1],[2,2],[3,3],[4,4],[5,5],[6,6],[7,7],[8,8],[9,9],[10,21]]              
+    samples_dir: null                # 可选，覆盖样本目录
+    output_base: null                # 可选，桶输出根目录（默认 {base_dir}/{task_name}/bucketed）
+
+  # ----- 步骤03：调用 Data-Juicer 清洗每个桶 -----
+  03_clean:
+    enabled: true
+    script: "scripts/03_clean_buckets_with_plots.py"
+    configs_dir: "configs/configs_qa"    # 需要修改：存放清洗配置文件（YAML）的目录
+    tag: "default"                       # 需要修改：清洗任务标签（用于输出子目录命名）
+    # 桶名到配置文件的映射（支持正则表达式）需要修改：根据您的桶名规则编写
+    # 必须要根据分桶的结果进行map
+    bucket_config_map:
+      # - pattern: "bucket_0"              # 匹配 turn 0 的桶（单轮）
+      #   config: "config_bucket_0.yaml"
+      # - pattern: "bucket_1"              # 匹配 turn 1 的桶
+      #   config: "config_bucket_1.yaml"
+      # - pattern: "bucket_[2-9]"          # 匹配 turn 2-9 的桶（区间形式如 bucket_2_2 会被此正则匹配吗？要根据实际桶名调整）
+      #   config: "overal_config.yaml"
+      - pattern: "bucket_10_21"         # 匹配长对话桶
+        config: "config_bucket_10plus.yaml"
+      - pattern: ".*"                    # 默认匹配所有未匹配的桶
+        config: "overal_config.yaml"
+    # 以下参数可选
+    bucketed_root: null                # 可选，分桶目录（默认 {base_dir}/{task_name}/bucketed）
+    cleaned_root: null                 # 可选，清洗输出根目录（默认 {base_dir}/{task_name}/cleaned_jsonl）
+    trace_root: null                   # 可选，trace 目录（默认 {base_dir}/{task_name}/trace_output）
+
+  # ----- 步骤04：应用清洗结果，生成最终训练数据 -----
+  04_finalize:
+    enabled: true
+    script: "scripts/04_apply_cleaned_loss_direct.py"
+    source_run_id: null                # 可选，指定清洗步骤的 run_id（如 "20250430_143022_clean_default"），不填则自动取最新
+    # 以下参数可选
+    original_json: ./datas/raw_data/data-simulation-4809-modify.json                # 原始 JSON 路径（默认 {base_dir}/{task_name}/raw_dialogues.json）
+    cleaned_root: null                 # 清洗结果根目录（默认 {base_dir}/{task_name}/cleaned_jsonl）
+    output_root: null                  # 最终训练数据输出根目录（默认 {base_dir}/{task_name}/final_training_data）
+
+  # ----- 步骤05：语义增强（可选）-----
+  05_augment:
+    enabled: true                     # 需要修改：是否启用增强（默认关闭，需要时改为 true）
+    script: "scripts/05_main_augment_add.py"
+    source_run_id: null                # 可选，指定最终数据的 run_id（如 "20250430_143022_clean_default_final"），不填则自动取最新
+    num_variants: 3                    # 每个原始对话生成多少个变体
+    min_turns: 1                       # 每个变体最少增强轮次数
+    max_turns: 2                       # 每个变体最多增强轮次数
+    target_roles: ["user"]             # 需要修改：要增强的角色（可选 "user" 或 "assistant"）
+    only_loss_true: false              # 是否只增强 loss=True 的消息（仅对 assistant 有意义）
+    adaptive_variants: false           # 是否根据可增强轮次自动调整变体数量
+    seed: 42                           # 随机种子
+    tag: "default"                     # 增强任务标签
+    # 以下参数可选
+    input_file: null                   # 输入 JSON 路径（若不使用 source_run_id）
+    output_dir: null                   # 增强输出目录（默认 {final_output_dir}/{timestamp}_augment_{tag}）
+
+# ------------------- 日志配置 -------------------
+logging:
+  level: "INFO"                        # 控制台输出级别（DEBUG/INFO/WARNING/ERROR）
+  file_level: "DEBUG"                  # 日志文件记录级别
