@@ -18,7 +18,6 @@ from copy import deepcopy
 from pathlib import Path
 from datetime import datetime
 
-# 导入增强工具包（请确保路径正确）
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from common import augment_utils_add as aug_utils
 
@@ -121,7 +120,7 @@ def main():
     parser.add_argument("--config_json", type=str, help="全局配置JSON字符串（优先级最高）")
     parser.add_argument("--source_run_id", type=str, help="最终训练数据的 run_id (例如 20250421_153022_clean_default_final)")
     parser.add_argument("--input_file", type=str, help="输入 JSON 文件路径（如果不使用 source_run_id）")
-    parser.add_argument("--output_dir", type=str, help="增强输出根目录")
+    parser.add_argument("--output_dir", type=str, help="增强输出根目录（若未指定，则自动放在任务目录下的 output_augmented_data 中）")
     parser.add_argument("--num_variants", type=int, default=3)
     parser.add_argument("--min_turns", type=int, default=1)
     parser.add_argument("--max_turns", type=int, default=2)
@@ -141,7 +140,19 @@ def main():
         step_cfg = config.get('steps', {}).get('05_augment', {})
         
         source_run_id = step_cfg.get('source_run_id') or args.source_run_id
-        output_dir = step_cfg.get('output_dir') or Path(config['paths']['output']['final_output_dir']) / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_augment_{step_cfg.get('tag', task_name)}"
+        # 确定输出目录
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        default_output_dir = task_dir / "output_augmented_data" / f"{timestamp}_augment_{step_cfg.get('tag', task_name)}"
+        # 优先使用配置中的 output_dir，否则使用默认目录
+        output_dir_str = step_cfg.get('output_dir')
+        if output_dir_str:
+            output_dir = Path(output_dir_str)
+            if not output_dir.is_absolute():
+                output_dir = task_dir / output_dir
+        else:
+            output_dir = default_output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
         num_variants = step_cfg.get('num_variants', args.num_variants)
         min_turns = step_cfg.get('min_turns', args.min_turns)
         max_turns = step_cfg.get('max_turns', args.max_turns)
@@ -157,17 +168,15 @@ def main():
         else:
             input_file = step_cfg.get('input_file') or (task_dir / "final_training_data" / get_latest_final_run_id(task_dir / "final_training_data") / "cleaned_training_data.json")
         if not input_file or not Path(input_file).exists():
-            # 需要提前定义logger，否则报错
             tmp_logger = logging.getLogger("Augment")
             tmp_logger.error(f"无法确定有效的输入文件，请提供 source_run_id 或 input_file")
             sys.exit(1)
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
         
         # 设置日志
         logger = setup_logger(task_dir, f"{task_name}_augment")
         logger.info(f"任务名称: {task_name}")
         logger.info(f"任务目录: {task_dir}")
+        logger.info(f"增强输出目录: {output_dir}")
     else:
         # 独立命令行模式
         input_file = args.input_file
@@ -255,14 +264,11 @@ def main():
         logger.warning(f"有 {len(failed_dialogues)} 个对话增强失败: {failed_dialogues[:10]}{'...' if len(failed_dialogues)>10 else ''}")
 
     # ---------- 保存文件：合并（原始+变体）和仅变体 ----------
-    # 分离原始数据和变体数据
     original_count = len(original_data)
-    variants_only = all_dialogues[original_count:]   # 只取变体部分
+    variants_only = all_dialogues[original_count:]
 
-    # 生成时间戳（用于文件名）
     save_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # 1. 保存合并文件（原始 + 变体）
     combined_json = output_dir / f"combined_augmented_{save_timestamp}.json"
     combined_jsonl = output_dir / f"combined_augmented_{save_timestamp}.jsonl"
 
@@ -275,7 +281,6 @@ def main():
         for d in all_dialogues:
             f.write(json.dumps(d, ensure_ascii=False) + '\n')
 
-    # 2. 保存仅变体文件（只含增强生成的对话）
     variants_json = output_dir / f"variants_only_{save_timestamp}.json"
     variants_jsonl = output_dir / f"variants_only_{save_timestamp}.jsonl"
 

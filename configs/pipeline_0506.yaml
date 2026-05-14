@@ -4,8 +4,8 @@
 # ============================================================
 
 # ------------------- 基础任务信息 -------------------
-task_name: "task_null"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
-resume: true                      # 是否启用断点续跑（true=跳过已完成步骤）
+task_name: "task_0506"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
+resume: false                      # 是否启用断点续跑（true=跳过已完成步骤）
 
 # ------------------- 原始数据路径 -------------------
 paths:
@@ -14,7 +14,7 @@ paths:
     prompt_dir: "./datas/cases_random"                    # 需要修改：存放 case_*.txt 提示文件的目录
   output:
     base_dir: "./intermediate"                           # 所有中间输出的根目录（会自动追加 task_name）
-    final_output_dir: "./output_augmented_data"          # 增强最终数据的输出目录
+    final_output_dir: "./output_augmented_data/{task_name}"          # 增强最终数据的输出目录
 
 # ------------------- 各步骤配置（通常只需修改路径和策略） -------------------
 steps:
@@ -35,7 +35,7 @@ steps:
     # 以下参数可选
     # input_json: null                 # 可选，覆盖 raw_dialogues.json 路径
     # 这里使用已有的数据，还需要修改04脚本的original_json路径保持一致
-    input_json: ./datas/raw_data/data-simulation-4809-modify.json                 # null可选，覆盖 raw_dialogues.json 路径
+    input_json: ./datas/raw_data/data-simulation-general2huaxia-260506.json                # null可选，覆盖 raw_dialogues.json 路径
     output_dir: null                 # 可选，样本输出目录（默认 {base_dir}/{task_name}/samples）
     stats_dir: null                  # 可选，轮次统计输出目录（默认 {base_dir}/{task_name}/stats）
 
@@ -54,7 +54,7 @@ steps:
     # 手动桶边界（仅当 strategy=manual 时使用）
     # 例如: [[0,0], [1,2], [3,5], [6,10], [11,20], [21,999]]
     # 以下参数可选
-    manual_buckets: [[0,0],[1,1],[2,2],[3,3],[4,4],[5,5],[6,6],[7,7],[8,8],[9,9],[10,21]]              
+    manual_buckets: [[0,0],[1,1],[2,2],[3,3],[4,4],[5,5],[6,6],[7,7],[8,8],[9,9],[10,10],[11,11],[12,20]]              
     samples_dir: null                # 可选，覆盖样本目录
     output_base: null                # 可选，桶输出根目录（默认 {base_dir}/{task_name}/bucketed）
 
@@ -73,7 +73,7 @@ steps:
       #   config: "config_bucket_1.yaml"
       # - pattern: "bucket_[2-9]"          # 匹配 turn 2-9 的桶（区间形式如 bucket_2_2 会被此正则匹配吗？要根据实际桶名调整）
       #   config: "overal_config.yaml"
-      - pattern: "bucket_10_21"         # 匹配长对话桶
+      - pattern: "bucket_20_plus"         # 匹配长对话桶
         config: "config_bucket_10plus.yaml"
       - pattern: ".*"                    # 默认匹配所有未匹配的桶
         config: "overal_config.yaml"
@@ -84,11 +84,11 @@ steps:
 
   # ----- 步骤04：应用清洗结果，生成最终训练数据 -----
   04_finalize:
-    enabled: true
+    enabled: True
     script: "scripts/04_apply_cleaned_loss_direct.py"
     source_run_id: null                # 可选，指定清洗步骤的 run_id（如 "20250430_143022_clean_default"），不填则自动取最新
     # 以下参数可选
-    original_json: ./datas/raw_data/data-simulation-4809-modify.json                # 原始 JSON 路径（默认 {base_dir}/{task_name}/raw_dialogues.json）
+    original_json: ./datas/raw_data/data-simulation-general2huaxia-260506.json              # 原始 JSON 路径（默认 {base_dir}/{task_name}/raw_dialogues.json）
     cleaned_root: null                 # 清洗结果根目录（默认 {base_dir}/{task_name}/cleaned_jsonl）
     output_root: null                  # 最终训练数据输出根目录（默认 {base_dir}/{task_name}/final_training_data）
 
