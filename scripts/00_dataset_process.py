@@ -174,7 +174,7 @@ def main():
             "    你是一位来自华夏银行委外阳光机构的电话专员，现在你需要向以下客户催收信用卡欠款。\n\n"
             "## 案例信息\n\n"
             "## 标签信息\n\n"
-            + prompt
+            + prompt      # 去掉prompt
         )
         dialogs[0]["system"] = system_content
 

@@ -104,7 +104,13 @@ steps:
     only_loss_true: false              # 是否只增强 loss=True 的消息（仅对 assistant 有意义）
     adaptive_variants: false           # 是否根据可增强轮次自动调整变体数量
     seed: 42                           # 随机种子
-    tag: "default"                     # 增强任务标签
+    # tag: "default"                     # 增强任务标签
+    tag: "asr_noise"
+    # ---------- 新增：词表噪声增强 ----------
+    noise_csv_path: "resources/prev_clean_summary.csv"
+    noise_replace_prob: 0.3        # 替换概率（遇到前置词时）
+    noise_insert: false            # false=替换模式，true=插入模式
+    # ----------------------------------------
     # 以下参数可选
     input_file: null                   # 输入 JSON 路径（若不使用 source_run_id）
     output_dir: null                   # 增强输出目录（默认 {final_output_dir}/{timestamp}_augment_{tag}）
