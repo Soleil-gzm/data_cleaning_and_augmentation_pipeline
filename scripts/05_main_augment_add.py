@@ -6,6 +6,7 @@
   1. combined_augmented_xxx.json/jsonl : 原始+变体
   2. variants_only_xxx.json/jsonl     : 仅变体
 支持 --config_json 参数，统一日志，动态路径。
+支持通过配置中的 augment_weights 控制每种增强操作的相对概率。
 """
 
 import json
@@ -18,7 +19,7 @@ from copy import deepcopy
 from pathlib import Path
 from datetime import datetime
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import augment_utils_add as aug_utils
 
 # ========== 日志配置 ==========
@@ -113,6 +114,7 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
                 original_text = new_messages[idx].get("content", "")
                 if not original_text:
                     continue
+                # 调用增强函数，传递 augment_weights
                 variants_list = aug_utils.augment_cell_multi(original_text, **aug_kwargs)
                 if variants_list and variants_list[0] != original_text:
                     new_messages[idx]["content"] = variants_list[0]
@@ -171,6 +173,17 @@ def main():
         seed = step_cfg.get('seed', args.seed)
         tag = step_cfg.get('tag', args.tag)
         
+        # ----- 读取增强操作权重（新增）-----
+        augment_weights = step_cfg.get('augment_weights', None)
+        if augment_weights is not None:
+            # 确保权重值为数值类型（用户可能写整数或浮点数）
+            augment_weights = {k: float(v) for k, v in augment_weights.items()}
+            logger_temp = logging.getLogger("Augment")
+            if logger_temp.handlers:
+                logger_temp.info(f"使用自定义增强权重: {augment_weights}")
+            else:
+                print(f"[INFO] 使用自定义增强权重: {augment_weights}")
+        
         # 确定输入文件
         if source_run_id:
             input_file = task_dir / "final_training_data" / source_run_id / "training_data.json"
@@ -186,8 +199,10 @@ def main():
         logger.info(f"任务名称: {task_name}")
         logger.info(f"任务目录: {task_dir}")
         logger.info(f"增强输出目录: {output_dir}")
+        if augment_weights:
+            logger.info(f"增强权重配置: {augment_weights}")
     else:
-        # 独立命令行模式
+        # 独立命令行模式（不支持权重配置，保持原行为）
         input_file = args.input_file
         output_dir = args.output_dir
         source_run_id = args.source_run_id
@@ -199,6 +214,9 @@ def main():
         adaptive_variants = args.adaptive_variants
         seed = args.seed
         tag = args.tag
+        # 独立模式暂不支持权重
+        # 独立模式的设计初衷是用于快速测试或调试，只需指定输入/输出路径和少数几个参数即可运行。
+        augment_weights = None  
         if not input_file and not source_run_id:
             print("错误：独立模式需要提供 --input_file 或 --source_run_id")
             sys.exit(1)
@@ -224,6 +242,8 @@ def main():
     logger.info(f"输入文件: {input_file}")
     logger.info(f"输出目录: {output_dir}")
     logger.info(f"增强参数: num_variants={num_variants}, min_turns={min_turns}, max_turns={max_turns}, target_roles={target_roles}, only_loss_true={only_loss_true}, adaptive_variants={adaptive_variants}, seed={seed}")
+    if augment_weights:
+        logger.info(f"使用自定义增强权重: {augment_weights}")
 
     # 加载原始数据
     logger.info("加载原始数据...")
@@ -246,7 +266,8 @@ def main():
         "augment_kwargs": {
             "num_variants": 1,
             "min_steps": 2,
-            "max_steps": 3
+            "max_steps": 3,
+            "augment_weights": augment_weights   # 传递权重配置
         }
     }
 
@@ -308,6 +329,7 @@ def main():
         "source_file": str(input_file),
         "command_line": " ".join(sys.argv),
         "config": enhance_config,
+        "augment_weights": augment_weights,   # 记录使用的权重
         "statistics": {
             "original_dialogues": len(original_data),
             "generated_variants": total_variants,

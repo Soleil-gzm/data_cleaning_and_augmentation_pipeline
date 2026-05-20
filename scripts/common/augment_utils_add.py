@@ -3,10 +3,11 @@ import random
 import re
 import pandas as pd
 import jieba
-from nlpcda import Homophone, RandomDeleteChar,Randomword,Similarword
+from nlpcda import Homophone, RandomDeleteChar, Randomword, Similarword
 
 # 预先加载词典
 jieba.initialize()
+
 # ================= 可配置参数 =================
 NUM_VARIANTS = 3                    # 每个原句生成几个变体（默认）
 
@@ -14,15 +15,6 @@ NUM_VARIANTS = 3                    # 每个原句生成几个变体（默认）
 FILLERS = ["嗯", "那个", "就是", "呃", "啊"]
 TAILS = ["吧", "啊", "哦", "呗"]
 TAIL_WORDS = set(["吧", "啊", "哦", "呗", "嗯", "啦", "呀", "嘛", "呐", "哈", "了", "吗", "呢"])
-
-# # 自定义同义词映射
-# SYNONYMS = {
-#     "睡觉": ["休息", "睡一下"],
-#     "晚点": ["晚些", "过一会儿"],
-#     "打": ["联系", "打电话"],
-#     "还": ["偿还", "归还"],
-#     "催": ["催促", "追"],
-# }
 
 # 否定词集合（语序打乱时跳过）
 NEGATION_WORDS = set(["不", "没", "无", "别", "不要", "不用", "未曾"])
@@ -232,110 +224,96 @@ def apply_word_repetition(sentence: str) -> str:
     new_sentence = sentence.replace(chosen, chosen + chosen, 1)
     return new_sentence
 
-# def apply_short_sentence_tweak(sentence: str) -> str:
-#     """对短句（≤4字）进行口语化改写"""
-#     if len(sentence) > 4:
-#         return sentence
-#     # 定义常见短句的映射
-#     short_map = {
-#         "对哦。": ["对呀。", "对啊。", "嗯对。"],
-#         "行。": ["好的。", "可以。", "嗯行。"],
-#         "知道了。": ["明白了。", "懂了。", "嗯嗯。"],
-#         "嗯。": ["嗯嗯。", "哦。", "好的。"],
-#     }
-#     if sentence in short_map:
-#         return random.choice(short_map[sentence])
-#     # 默认加语气词
-#     return random.choice(["嗯，", "哦，", "那个，"]) + sentence
+# ================= 增强函数映射表（用于权重控制） =================
+AUGMENT_FUNC_MAP = {
+    "insert_filler": apply_insert_filler,
+    "stutter": apply_stutter,
+    "reorder": apply_reorder,
+    "homophone": apply_homophone,
+    "random_delete": apply_random_delete,
+    "random_entity_replace": apply_random_entity_replace,
+    "similarword": apply_similarword,
+    "word_repetition": apply_word_repetition,
+}
 
-# ================= 多步叠加增强函数 =================
+# ================= 多步叠加增强函数（支持权重） =================
 
-# 可用的增强函数列表（可在此处增删或调整顺序）
-AUGMENT_FUNCS = [
-    apply_insert_filler,
-    # apply_synonym_replace,
-    apply_stutter,
-    apply_reorder,
-    apply_homophone,
-    apply_random_delete,
-    apply_reorder,
-    apply_random_entity_replace,
-    apply_similarword,
-    apply_reorder,
-    apply_word_repetition,
-    apply_reorder,
-    # apply_short_sentence_tweak,
-]
-
-def multi_step_augment(sentence: str, min_steps=1, max_steps=3) -> str:
+def multi_step_augment(sentence: str, min_steps=1, max_steps=3, weights=None) -> str:
     """
     对句子应用多次随机增强（可重复）
     :param sentence: 原始句子
     :param min_steps: 最少叠加次数
     :param max_steps: 最多叠加次数
+    :param weights: 可选，各增强操作的权重字典，格式如 {"insert_filler":2, "stutter":1, ...}
+                    若为 None，则使用均匀分布（所有操作等概率）
     :return: 增强后的句子
     """
     if not isinstance(sentence, str) or len(sentence.strip()) == 0:
         return sentence
+
+    # 构建 population 和对应的权重列表
+    if weights is not None:
+        # 过滤掉权重为0或负数的操作
+        valid_ops = [(name, w) for name, w in weights.items() if w > 0 and name in AUGMENT_FUNC_MAP]
+        if not valid_ops:
+            # 若所有权重都无效，回退到均匀分布
+            population = list(AUGMENT_FUNC_MAP.values())
+            weight_list = None
+        else:
+            population = [AUGMENT_FUNC_MAP[name] for name, _ in valid_ops]
+            weight_list = [w for _, w in valid_ops]
+    else:
+        population = list(AUGMENT_FUNC_MAP.values())
+        weight_list = None
+
     steps = random.randint(min_steps, max_steps)
     result = sentence
     for _ in range(steps):
-        func = random.choice(AUGMENT_FUNCS)
+        if weight_list is not None:
+            func = random.choices(population, weights=weight_list, k=1)[0]
+        else:
+            func = random.choice(population)
         result = func(result)
+
     # 如果结果未变且句子不空，重试最多2次
     if result == sentence and len(sentence) > 1:
         for _ in range(2):
             new_result = sentence
             for _ in range(steps):
-                func = random.choice(AUGMENT_FUNCS)
+                if weight_list is not None:
+                    func = random.choices(population, weights=weight_list, k=1)[0]
+                else:
+                    func = random.choice(population)
                 new_result = func(new_result)
             if new_result != sentence:
                 result = new_result
                 break
     return result
-
-def augment_cell_multi(cell_value, num_variants=NUM_VARIANTS, min_steps=1, max_steps=3, return_list=True):
+    
+def augment_cell_multi(cell_value, num_variants=NUM_VARIANTS, min_steps=1, max_steps=3, augment_weights=None):
     """
     处理一个单元格（可能含 '/' 分隔的多条句子），对每条句子生成 num_variants 个变体。
-    返回格式：
-        - return_list=True（默认）：返回列表，每个元素是一个变体字符串（若原单元格有多条句子，
-          则将每条句子的变体平铺，即 len(result) == num_variants * 句子数）。
-        - return_list=False：保留旧行为，返回 '/' 连接的字符串（不推荐使用）。
+    返回平铺的变体列表，长度为 (句子数 × num_variants)。
     
     参数：
         cell_value: 输入字符串，可能包含 '/' 分隔的多句话
         num_variants: 每句话生成的变体数量
         min_steps: 每个变体最少增强步数
         max_steps: 每个变体最多增强步数
-        return_list: 是否返回列表
+        augment_weights: 权重字典，传递给 multi_step_augment
     """
     if pd.isna(cell_value):
-        return [] if return_list else ""
+        return []
     
     raw_sentences = [s.strip() for s in str(cell_value).split('/') if s.strip()]
     if not raw_sentences:
-        return [] if return_list else ""
+        return []
     
-    # 为每个句子生成 num_variants 个变体
-    all_variants = []          # 存储所有变体（平铺）
+    all_variants = []
     for sent in raw_sentences:
         for _ in range(num_variants):
-            variant = multi_step_augment(sent, min_steps, max_steps)
+            variant = multi_step_augment(sent, min_steps, max_steps, weights=augment_weights)
             all_variants.append(variant)
     
-    if return_list:
-        return all_variants
-    else:
-        # 旧行为：用 '/' 连接所有变体（不推荐，仅为兼容）
-        return "/".join(all_variants)
+    return all_variants
 
-# ================= 辅助函数 =================
-def move_column_to_right(df, col_name, new_col_name):
-    """将新列移动到原列右侧"""
-    cols = df.columns.tolist()
-    if new_col_name not in cols:
-        return df
-    idx = cols.index(col_name)
-    cols.remove(new_col_name)
-    cols.insert(idx + 1, new_col_name)
-    return df[cols]
