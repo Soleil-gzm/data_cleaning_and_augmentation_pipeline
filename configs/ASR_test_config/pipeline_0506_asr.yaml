@@ -29,7 +29,7 @@ steps:
 
   # ----- 步骤01：拆分为单轮样本 -----
   01_split:
-    enabled: true
+    enabled: false
     script: "scripts/01_split_dialogues.py"
     batch_size: 120000               # 每个 JSONL 文件包含的最大对话数
     # 以下参数可选
@@ -41,7 +41,7 @@ steps:
 
   # ----- 步骤02：按轮次分桶 -----
   02_bucket:
-    enabled: true
+    enabled: false
     script: "scripts/02_split_into_buckets.py"
     # 分桶策略：auto（自动，推荐）、percentile、equal_count、manual
     strategy: "manual"                 # 需要修改（通常用 auto）
@@ -84,7 +84,7 @@ steps:
 
   # ----- 步骤04：应用清洗结果，生成最终训练数据 -----
   04_finalize:
-    enabled: True
+    enabled: false
     script: "scripts/04_apply_cleaned_loss_direct.py"
     source_run_id: null                # 可选，指定清洗步骤的 run_id（如 "20250430_143022_clean_default"），不填则自动取最新
     # 以下参数可选
@@ -92,26 +92,9 @@ steps:
     cleaned_root: null                 # 清洗结果根目录（默认 {base_dir}/{task_name}/cleaned_jsonl）
     output_root: null                  # 最终训练数据输出根目录（默认 {base_dir}/{task_name}/final_training_data）
 
-  # # ----- 步骤05：语义增强（可选）-----
-  # 05_augment:
-  #   enabled: true                     # 需要修改：是否启用增强（默认关闭，需要时改为 true）
-  #   script: "scripts/05_main_augment_add.py"
-  #   source_run_id: null                # 可选，指定最终数据的 run_id（如 "20250430_143022_clean_default_final"），不填则自动取最新
-  #   num_variants: 3                    # 每个原始对话生成多少个变体
-  #   min_turns: 1                       # 每个变体最少增强轮次数
-  #   max_turns: 2                       # 每个变体最多增强轮次数
-  #   target_roles: ["user"]             # 需要修改：要增强的角色（可选 "user" 或 "assistant"）
-  #   only_loss_true: false              # 是否只增强 loss=True 的消息（仅对 assistant 有意义）
-  #   adaptive_variants: false           # 是否根据可增强轮次自动调整变体数量
-  #   seed: 42                           # 随机种子
-  #   tag: "default"                     # 增强任务标签
-  #   # 以下参数可选
-  #   input_file: null                   # 输入 JSON 路径（若不使用 source_run_id）
-  #   output_dir: null                   # 增强输出目录（默认 {final_output_dir}/{timestamp}_augment_{tag}）
-
   # ----- 步骤05：语义增强（可选）-----
   05_augment:
-    enabled: true                     # 需要修改：是否启用增强（默认关闭，需要时改为 true）
+    enabled: false                     # 需要修改：是否启用增强（默认关闭，需要时改为 true）
     script: "scripts/05_main_augment_add.py"
     source_run_id: null                # 可选，指定最终数据的 run_id（如 "20250430_143022_clean_default_final"），不填则自动取最新
     num_variants: 3                    # 每个原始对话生成多少个变体
