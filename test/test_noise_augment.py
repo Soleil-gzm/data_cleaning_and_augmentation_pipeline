@@ -1,58 +1,79 @@
 #!/usr/bin/env python3
 """
-测试 ASR 噪声增强器（本地模型版）
-用法：python test/test_asr_augmenter.py --vectors_path ... --pinyin_path ... --model_path /path/to/local/model
+硬编码测试脚本：验证 ASR 噪声增强器效果
+使用前请修改下方的四个路径变量
 """
-import argparse
+import sys
 import random
 import jieba
 import re
 from pathlib import Path
-import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))  # 添加项目根目录
+# 添加项目根目录到 Python 路径（假设脚本放在根目录或 test/ 下）
+sys.path.insert(0, str(Path(__file__).parent))
 from common.asr_noise_augmenter import AsrNoiseAugmenter
 
-def apply_asr_noise(sentence: str, augmenter: AsrNoiseAugmenter, alpha=0.7, top_k=5) -> str:
+# ========== 请修改以下路径 ==========
+MODEL_PATH = "Models/paraphrase-multilingual-MiniLM-L12-v2"
+VECTORS_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_2_no_prob/abnormal_vectors.pkl"
+PINYIN_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_2_no_prob/abnormal_pinyin.pkl"
+PREV_MAP_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_2_no_prob/prev_to_abnormals.pkl"
+# ===================================
+
+# 可选：调整拼音权重（0~1，越大越偏向拼音）
+ALPHA = 0.7
+# 随机种子（便于复现）
+RANDOM_SEED = 42
+
+def apply_asr_noise(sentence: str, augmenter: AsrNoiseAugmenter) -> str:
+    """对句子中随机一个中文词语进行 ASR 噪声替换"""
     if not sentence or not sentence.strip():
         return sentence
     words = jieba.lcut(sentence)
     if not words:
         return sentence
+    # 选择中文字词（仅中文，不含标点）
     candidates_idx = [i for i, w in enumerate(words) if re.fullmatch(r'[\u4e00-\u9fa5]+', w)]
     if not candidates_idx:
         return sentence
     idx = random.choice(candidates_idx)
     target = words[idx]
-    abnormal_list = augmenter.find_best_abnormals(target, top_k=top_k, alpha=alpha)
-    if abnormal_list:
-        chosen = random.choice(abnormal_list)
+    candidates = augmenter.find_best_abnormals(target, top_k=5, alpha=ALPHA)
+    if candidates:
+        chosen = random.choice(candidates)
         words[idx] = chosen
     return ''.join(words)
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--vectors_path", required=True)
-    parser.add_argument("--pinyin_path", required=True)
-    parser.add_argument("--prev_map_path", default=None)
-    parser.add_argument("--model_path", required=True, help="本地 SentenceTransformer 模型文件夹路径")
-    parser.add_argument("--alpha", type=float, default=0.7)
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-
-    random.seed(args.seed)
+    # 设置随机种子
+    random.seed(RANDOM_SEED)
     jieba.initialize()
 
-    print("正在加载 ASR 增强器（本地模型）...")
+    print("=" * 70)
+    print("ASR 噪声增强器测试（硬编码版本）")
+    print("=" * 70)
+
+    # 1. 检查文件是否存在
+    for path, name in [(VECTORS_PATH, "向量文件"), (PINYIN_PATH, "拼音文件"), (MODEL_PATH, "模型文件夹")]:
+        if not Path(path).exists():
+            print(f"错误：{name} 不存在: {path}")
+            sys.exit(1)
+    if PREV_MAP_PATH and not Path(PREV_MAP_PATH).exists():
+        print(f"警告：前置词映射文件不存在，将不使用前置词限制: {PREV_MAP_PATH}")
+
+    # 2. 加载增强器
+    print("正在加载 ASR 增强器...")
     augmenter = AsrNoiseAugmenter(
-        vectors_path=args.vectors_path,
-        pinyin_path=args.pinyin_path,
-        prev_map_path=args.prev_map_path,
-        model_path=args.model_path
+        vectors_path=VECTORS_PATH,
+        pinyin_path=PINYIN_PATH,
+        prev_map_path=PREV_MAP_PATH if Path(PREV_MAP_PATH).exists() else None,
+        model_path=MODEL_PATH
     )
     print(f"异常词数量: {len(augmenter.abnormal_words)}")
+    print(f"前置词种类: {len(augmenter.prev_to_abnormals)}")
     print("加载完成。\n")
 
+    # 3. 测试句子集
     test_sentences = [
         "我的信用卡逾期了，怎么办？",
         "请尽快还款，否则会影响征信。",
@@ -61,25 +82,27 @@ def main():
         "我需要申请分期还款。"
     ]
 
-    print("=" * 60)
-    print("原始句子 -> 增强后句子")
-    print("=" * 60)
-
+    print("【句子级别增强测试】每个原句生成 3 个变体")
+    print("-" * 70)
     for original in test_sentences:
         variants = []
         for _ in range(3):
-            variant = apply_asr_noise(original, augmenter, alpha=args.alpha)
-            variants.append(variant)
+            var = apply_asr_noise(original, augmenter)
+            variants.append(var)
         print(f"原句: {original}")
         for i, v in enumerate(variants, 1):
             print(f"  变体{i}: {v}")
         print()
 
-    print("\n[演示] 对单个词的候选异常词（top-5）：")
-    demo_words = ["逾期", "还款", "征信", "客服"]
+    # 4. 单词语义+拼音匹配演示
+    print("【单词语义+拼音匹配演示】显示每个词的前5个候选异常词")
+    print("-" * 70)
+    demo_words = ["逾期", "还款", "征信", "客服", "银行"]
     for w in demo_words:
-        candidates = augmenter.find_best_abnormals(w, top_k=5, alpha=args.alpha)
-        print(f"{w} -> {candidates}")
+        cand = augmenter.find_best_abnormals(w, top_k=5, alpha=ALPHA)
+        print(f"{w} -> {cand}")
+
+    print("\n测试完成。")
 
 if __name__ == "__main__":
     main()
