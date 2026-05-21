@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-硬编码测试脚本：验证 ASR 噪声增强器效果
-使用前请修改下方的四个路径变量
+硬编码测试脚本：ASR 噪声增强器（前置词匹配 + 多操作 + 插入）
+使用前请修改下方的路径变量
 """
 import sys
 import random
 import jieba
 import re
 from pathlib import Path
+from copy import deepcopy
 
-# 添加项目根目录到 Python 路径（假设脚本放在根目录或 test/ 下）
 sys.path.insert(0, str(Path(__file__).parent))
 from common.asr_noise_augmenter import AsrNoiseAugmenter
 
@@ -20,48 +20,103 @@ PINYIN_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_2_no_p
 PREV_MAP_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_2_no_prob/prev_to_abnormals.pkl"
 # ===================================
 
-# 可选：调整拼音权重（0~1，越大越偏向拼音）
-ALPHA = 0.7
-# 随机种子（便于复现）
+# 增强参数
+ALPHA = 0.7                     # 拼音权重
 RANDOM_SEED = 42
+MAX_OPERATIONS = 2              # 每个句子最多进行几次替换/插入操作（避免过度增强）
+INSERT_PROB = 0.1               # 插入操作的概率（否则为替换）
+print("插入概率：",INSERT_PROB)
+RETRY_TIMES = 3                 # 若变体与原句相同，最多重试次数
 
-def apply_asr_noise(sentence: str, augmenter: AsrNoiseAugmenter) -> str:
-    """对句子中随机一个中文词语进行 ASR 噪声替换"""
+def enhance_sentence(sentence: str, augmenter: AsrNoiseAugmenter) -> str:
+    """
+    对句子进行 ASR 噪声增强（支持替换/插入，利用前置词匹配）
+    返回增强后的句子。
+    """
     if not sentence or not sentence.strip():
         return sentence
+
+    # 分词（保留原始分隔符信息，简单用 jieba 分词后再拼接可能丢失空格，但对于中文影响不大）
     words = jieba.lcut(sentence)
-    if not words:
+    if len(words) <= 1:
         return sentence
-    # 选择中文字词（仅中文，不含标点）
-    candidates_idx = [i for i, w in enumerate(words) if re.fullmatch(r'[\u4e00-\u9fa5]+', w)]
-    if not candidates_idx:
-        return sentence
-    idx = random.choice(candidates_idx)
-    target = words[idx]
-    candidates = augmenter.find_best_abnormals(target, top_k=5, alpha=ALPHA)
-    if candidates:
-        chosen = random.choice(candidates)
-        words[idx] = chosen
-    return ''.join(words)
+
+    # 决定进行多少次操作（1 到 MAX_OPERATIONS 之间随机）
+    num_ops = random.randint(1, MAX_OPERATIONS)
+    # 为了避免重复操作同一位置，记录已操作过的索引（替换后词语长度可能变化，这里简单用位置索引+偏移处理较复杂，我们采用重新扫描的方式）
+    # 更简单的方法：每次操作后重新分词，并对新词序列再次操作（但可能导致指数增长）
+    # 为了简化，我们每操作一次就重新生成一次句子，循环 num_ops 次
+    current_sentence = sentence
+    for _ in range(num_ops):
+        # 对当前句子重新分词
+        cur_words = jieba.lcut(current_sentence)
+        if len(cur_words) < 2:
+            break
+        # 寻找可以操作的位置（需要前置词匹配）
+        # 遍历词列表，对于位置 i（从1开始），检查 words[i-1] 是否在 prev_to_abnormals 中
+        candidates_pos = []
+        for i in range(1, len(cur_words)):
+            prev_word = cur_words[i-1]
+            if prev_word in augmenter.prev_to_abnormals:
+                candidates_pos.append(i)   # 可以操作当前词（cur_words[i]）
+        if not candidates_pos:
+            # 没有可操作的位置，退出
+            break
+        # 随机选择一个位置
+        pos = random.choice(candidates_pos)
+        prev_word = cur_words[pos-1]
+        target_word = cur_words[pos]
+        # 获取候选异常词（基于前置词限制）
+        candidates = augmenter.find_best_abnormals(
+            target_word, 
+            prev_word=prev_word, 
+            top_k=5, 
+            alpha=ALPHA
+        )
+        if not candidates:
+            continue
+        # 随机选择是否插入（INSERT_PROB）还是替换
+        if random.random() < INSERT_PROB:
+            # 插入：在前置词之后、目标词之前插入一个异常词
+            insert_word = random.choice(candidates)
+            new_words = cur_words[:pos] + [insert_word] + cur_words[pos:]
+        else:
+            # 替换：用异常词替换目标词
+            replace_word = random.choice(candidates)
+            new_words = cur_words[:pos] + [replace_word] + cur_words[pos+1:]
+        # 重新拼接成字符串
+        current_sentence = ''.join(new_words)
+    return current_sentence
+
+def apply_asr_noise_with_retry(sentence: str, augmenter: AsrNoiseAugmenter) -> str:
+    """
+    包装增强函数，如果结果与原句相同则重试，直到不同或达到最大重试次数
+    """
+    original = sentence
+    for attempt in range(RETRY_TIMES):
+        new_sent = enhance_sentence(original, augmenter)
+        if new_sent != original:
+            return new_sent
+    # 如果始终相同，返回原句（不做修改）
+    return original
 
 def main():
-    # 设置随机种子
     random.seed(RANDOM_SEED)
     jieba.initialize()
 
     print("=" * 70)
-    print("ASR 噪声增强器测试（硬编码版本）")
+    print("ASR 噪声增强器测试（前置词匹配 + 多操作 + 插入）")
     print("=" * 70)
 
-    # 1. 检查文件是否存在
+    # 检查文件
     for path, name in [(VECTORS_PATH, "向量文件"), (PINYIN_PATH, "拼音文件"), (MODEL_PATH, "模型文件夹")]:
         if not Path(path).exists():
             print(f"错误：{name} 不存在: {path}")
             sys.exit(1)
-    if PREV_MAP_PATH and not Path(PREV_MAP_PATH).exists():
-        print(f"警告：前置词映射文件不存在，将不使用前置词限制: {PREV_MAP_PATH}")
+    if not Path(PREV_MAP_PATH).exists():
+        print(f"警告：前置词映射文件不存在，将无法使用前置词限制: {PREV_MAP_PATH}")
 
-    # 2. 加载增强器
+    # 加载增强器
     print("正在加载 ASR 增强器...")
     augmenter = AsrNoiseAugmenter(
         vectors_path=VECTORS_PATH,
@@ -73,7 +128,7 @@ def main():
     print(f"前置词种类: {len(augmenter.prev_to_abnormals)}")
     print("加载完成。\n")
 
-    # 3. 测试句子集
+    # 测试句子
     test_sentences = [
         "我的信用卡逾期了，怎么办？",
         "请尽快还款，否则会影响征信。",
@@ -82,27 +137,24 @@ def main():
         "我需要申请分期还款。"
     ]
 
-    print("【句子级别增强测试】每个原句生成 3 个变体")
+    print("【句子增强测试】每个原句生成 3 个变体（支持多操作、插入）")
     print("-" * 70)
     for original in test_sentences:
         variants = []
         for _ in range(3):
-            var = apply_asr_noise(original, augmenter)
-            variants.append(var)
+            variant = apply_asr_noise_with_retry(original, augmenter)
+            variants.append(variant)
         print(f"原句: {original}")
         for i, v in enumerate(variants, 1):
             print(f"  变体{i}: {v}")
         print()
 
-    # 4. 单词语义+拼音匹配演示
-    print("【单词语义+拼音匹配演示】显示每个词的前5个候选异常词")
-    print("-" * 70)
-    demo_words = ["逾期", "还款", "征信", "客服", "银行"]
-    for w in demo_words:
-        cand = augmenter.find_best_abnormals(w, top_k=5, alpha=ALPHA)
-        print(f"{w} -> {cand}")
-
-    print("\n测试完成。")
+    # 可选：展示前置词映射样例
+    print("【前置词映射示例】")
+    sample_prev = list(augmenter.prev_to_abnormals.keys())[:5]
+    for prev in sample_prev:
+        abnormals = augmenter.prev_to_abnormals[prev][:10]  # 只显示前10个
+        print(f"{prev} -> {abnormals}")
 
 if __name__ == "__main__":
     main()
