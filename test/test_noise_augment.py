@@ -36,7 +36,7 @@ def enhance_sentence(sentence: str, augmenter: AsrNoiseAugmenter) -> str:
     if not sentence or not sentence.strip():
         return sentence
 
-    # 分词（保留原始分隔符信息，简单用 jieba 分词后再拼接可能丢失空格，但对于中文影响不大）
+    # 分词（保留原始分隔符信息，简单用 jieba 分词）
     words = jieba.lcut(sentence)
     if len(words) <= 1:
         return sentence
