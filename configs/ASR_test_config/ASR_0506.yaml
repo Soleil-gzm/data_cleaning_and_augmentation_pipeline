@@ -109,11 +109,12 @@ steps:
     input_file: null                   # 输入 JSON 路径（若不使用 source_run_id）
     output_dir: null                   # 增强输出目录（默认 {final_output_dir}/{timestamp}_augment_{tag}）
  
-   # ASR 噪声增强的缓存文件路径（相对于任务目录或绝对路径）
+   # ASR 噪声增强的缓存文件路径（相对于任务目录或绝对路径）t:
     asr_cache:
       vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/abnormal_vectors.pkl"
       pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/abnormal_pinyin.pkl"
-      prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/prev_to_abnormals.pkl"   # 可选，如果没有可以忽略
+      prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/prev_to_abnormals.pkl"
+      model_path: "Models/paraphrase-multilingual-MiniLM-L12-v2"   # 实际路径
  # ----- 新增：增强操作权重配置 -----
  # 直接用整数相对大小表达设计意图（“我要让语序打乱出现次数是结巴模拟的 3 倍”）。
     augment_weights:

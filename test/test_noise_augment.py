@@ -1,120 +1,85 @@
 #!/usr/bin/env python3
 """
-测试词表噪声增强效果
-用法:
-    python test_noise_augment.py --csv <词表文件> --text "一句话"
-    python test_noise_augment.py --csv <词表文件> --sentences "句子1" "句子2" "句子3"
-    python test_noise_augment.py --csv <词表文件> --input input.txt --output output.txt
-    python test_noise_augment.py --csv <词表文件> --text "我的账号" --replace_prob 0.5 --insert
+测试 ASR 噪声增强器（本地模型版）
+用法：python test/test_asr_augmenter.py --vectors_path ... --pinyin_path ... --model_path /path/to/local/model
 """
-
-import random
-import re
 import argparse
-from pathlib import Path
-import pandas as pd
+import random
 import jieba
+import re
+from pathlib import Path
+import sys
 
-# ---------- NoiseAugmenter 类（与 common/augment_with_noise.py 保持一致） ----------
-def parse_abnormal_words(abnormal_str: str):
-    """解析 '章(0.667) 张(0.333)' 格式"""
-    items = abnormal_str.split()
-    result = []
-    for item in items:
-        match = re.match(r'(.+)\(([0-9.]+)\)', item)
-        if match:
-            word = match.group(1)
-            prob = float(match.group(2))
-            result.append((word, prob))
-    return result
+sys.path.insert(0, str(Path(__file__).parent.parent))  # 添加项目根目录
+from common.asr_noise_augmenter import AsrNoiseAugmenter
 
-class NoiseAugmenter:
-    def __init__(self, csv_path: str, replace_prob: float = 0.3, use_insert: bool = False):
-        self.replace_prob = replace_prob
-        self.use_insert = use_insert
-        self.patterns = {}
-        df = pd.read_csv(csv_path)
-        for _, row in df.iterrows():
-            prev = row['prev_word']
-            abnormal_list = parse_abnormal_words(row['abnormal_words'])
-            if abnormal_list:
-                self.patterns[prev] = abnormal_list
+def apply_asr_noise(sentence: str, augmenter: AsrNoiseAugmenter, alpha=0.7, top_k=5) -> str:
+    if not sentence or not sentence.strip():
+        return sentence
+    words = jieba.lcut(sentence)
+    if not words:
+        return sentence
+    candidates_idx = [i for i, w in enumerate(words) if re.fullmatch(r'[\u4e00-\u9fa5]+', w)]
+    if not candidates_idx:
+        return sentence
+    idx = random.choice(candidates_idx)
+    target = words[idx]
+    abnormal_list = augmenter.find_best_abnormals(target, top_k=top_k, alpha=alpha)
+    if abnormal_list:
+        chosen = random.choice(abnormal_list)
+        words[idx] = chosen
+    return ''.join(words)
 
-    def augment_sentence(self, sentence: str, seed: int = None):
-        if seed is not None:
-            random.seed(seed)
-        words = list(jieba.cut(sentence))
-        new_words = []
-        i = 0
-        while i < len(words):
-            current = words[i]
-            if current in self.patterns and i + 1 < len(words):
-                if random.random() < self.replace_prob:
-                    candidates = self.patterns[current]
-                    abnormal_words = [w for w, p in candidates]
-                    probs = [p for w, p in candidates]
-                    selected = random.choices(abnormal_words, weights=probs, k=1)[0]
-                    if self.use_insert:
-                        new_words.append(current)
-                        new_words.append(selected)
-                        i += 1
-                    else:
-                        new_words.append(current)
-                        new_words.append(selected)
-                        i += 2
-                    continue
-            new_words.append(current)
-            i += 1
-        return ''.join(new_words)
-
-# ---------- 测试主函数 ----------
 def main():
-    parser = argparse.ArgumentParser(description="测试词表噪声增强效果")
-    parser.add_argument("--csv", required=True, help="prev_clean_summary.csv 文件路径")
-    parser.add_argument("--text", type=str, help="待增强的单句（与 --sentences 互斥）")
-    parser.add_argument("--sentences", nargs='+', help="多个句子，空格分隔")
-    parser.add_argument("--input", type=str, help="输入文件（每行一句）")
-    parser.add_argument("--output", type=str, help="输出文件（与 --input 搭配）")
-    parser.add_argument("--replace_prob", type=float, default=0.3, help="替换概率")
-    parser.add_argument("--insert", action="store_true", help="插入模式（默认替换）")
-    parser.add_argument("--seed", type=int, default=42, help="随机种子")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--vectors_path", required=True)
+    parser.add_argument("--pinyin_path", required=True)
+    parser.add_argument("--prev_map_path", default=None)
+    parser.add_argument("--model_path", required=True, help="本地 SentenceTransformer 模型文件夹路径")
+    parser.add_argument("--alpha", type=float, default=0.7)
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    # 加载增强器
-    augmenter = NoiseAugmenter(args.csv, args.replace_prob, args.insert)
+    random.seed(args.seed)
+    jieba.initialize()
 
-    if args.sentences:
-        # 多个句子模式
-        for i, sent in enumerate(args.sentences):
-            original = sent.strip()
-            if not original:
-                continue
-            augmented = augmenter.augment_sentence(original, args.seed)
-            print(f"[{i+1}] 原始: {original}")
-            print(f"    增强: {augmented}\n")
-    elif args.text:
-        # 单句模式
-        original = args.text.strip()
-        augmented = augmenter.augment_sentence(original, args.seed)
-        print(f"原始句子: {original}")
-        print(f"增强句子: {augmented}")
-    elif args.input:
-        # 文件模式
-        input_path = Path(args.input)
-        if not input_path.exists():
-            print(f"错误：输入文件不存在 {input_path}")
-            return
-        output_path = Path(args.output) if args.output else input_path.with_suffix(".aug.txt")
-        with open(input_path, 'r', encoding='utf-8') as fin, \
-             open(output_path, 'w', encoding='utf-8') as fout:
-            for line in fin:
-                line = line.strip()
-                if line:
-                    aug_line = augmenter.augment_sentence(line, args.seed)
-                    fout.write(aug_line + '\n')
-        print(f"增强完成，结果保存至: {output_path}")
-    else:
-        print("请提供 --text 或 --sentences 或 --input")
+    print("正在加载 ASR 增强器（本地模型）...")
+    augmenter = AsrNoiseAugmenter(
+        vectors_path=args.vectors_path,
+        pinyin_path=args.pinyin_path,
+        prev_map_path=args.prev_map_path,
+        model_path=args.model_path
+    )
+    print(f"异常词数量: {len(augmenter.abnormal_words)}")
+    print("加载完成。\n")
+
+    test_sentences = [
+        "我的信用卡逾期了，怎么办？",
+        "请尽快还款，否则会影响征信。",
+        "这个月账单我已经还清了。",
+        "客服态度很好，帮我处理了问题。",
+        "我需要申请分期还款。"
+    ]
+
+    print("=" * 60)
+    print("原始句子 -> 增强后句子")
+    print("=" * 60)
+
+    for original in test_sentences:
+        variants = []
+        for _ in range(3):
+            variant = apply_asr_noise(original, augmenter, alpha=args.alpha)
+            variants.append(variant)
+        print(f"原句: {original}")
+        for i, v in enumerate(variants, 1):
+            print(f"  变体{i}: {v}")
+        print()
+
+    print("\n[演示] 对单个词的候选异常词（top-5）：")
+    demo_words = ["逾期", "还款", "征信", "客服"]
+    for w in demo_words:
+        candidates = augmenter.find_best_abnormals(w, top_k=5, alpha=args.alpha)
+        print(f"{w} -> {candidates}")
 
 if __name__ == "__main__":
     main()

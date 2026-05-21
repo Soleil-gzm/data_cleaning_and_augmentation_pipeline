@@ -203,31 +203,37 @@ def main():
             logger.info(f"增强权重配置: {augment_weights}")
 
         # 读取 asr_cache 配置（可选）
+        # 在 if args.config_json: 分支中，logger 初始化之后添加
         asr_cache_cfg = step_cfg.get('asr_cache', {})
         if asr_cache_cfg:
             vectors_path = asr_cache_cfg.get('vectors_path')
             pinyin_path = asr_cache_cfg.get('pinyin_path')
             prev_map_path = asr_cache_cfg.get('prev_map_path')
-            # 如果是相对路径，转为绝对路径（相对于任务目录）
+            model_path = asr_cache_cfg.get('model_path')   # 新增：本地模型路径
+            # 相对路径处理（相对于任务目录或项目根目录，根据实际情况）
             if vectors_path and not Path(vectors_path).is_absolute():
-                    # 如果配置是相对路径，相对于项目根目录（base_dir）
-                vectors_path = base_dir / vectors_path
-                # vectors_path = task_dir / vectors_path
+                vectors_path = task_dir / vectors_path
             if pinyin_path and not Path(pinyin_path).is_absolute():
                 pinyin_path = task_dir / pinyin_path
             if prev_map_path and not Path(prev_map_path).is_absolute():
                 prev_map_path = task_dir / prev_map_path
+            if model_path and not Path(model_path).is_absolute():
+                # 假设 model_path 是绝对路径或相对于项目根目录，这里简单处理为绝对路径
+                model_path = Path(model_path)
             try:
                 from common.asr_noise_augmenter import AsrNoiseAugmenter
                 asr_augmenter = AsrNoiseAugmenter(
                     vectors_path=vectors_path,
                     pinyin_path=pinyin_path,
-                    prev_map_path=prev_map_path
+                    prev_map_path=prev_map_path,
+                    model_path=model_path   # 传入
                 )
                 aug_utils.set_asr_augmenter(asr_augmenter)
-                logger.info(f"ASR 增强器已加载，向量文件: {vectors_path}")
+                logger.info(f"ASR 增强器已加载，模型路径: {model_path}")
             except Exception as e:
                 logger.warning(f"加载 ASR 增强器失败: {e}，将禁用 asr_noise 增强")
+        else:
+            logger.info("未配置 asr_cache，将禁用 asr_noise 增强")
 
     else:
         # 独立命令行模式（不支持权重配置，保持原行为）
