@@ -4,8 +4,8 @@
 # ============================================================
 
 # ------------------- 基础任务信息 -------------------
-task_name: "ASR_0506"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
-resume: true                      # 是否启用断点续跑（true=跳过已完成步骤）
+task_name: "ASR_0506_v1"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
+resume: false                      # 是否启用断点续跑（true=跳过已完成步骤）
 
 # ------------------- 原始数据路径 -------------------
 paths:
@@ -29,7 +29,7 @@ steps:
 
   # ----- 步骤01：拆分为单轮样本 -----
   01_split:
-    enabled: true
+    enabled: false
     script: "scripts/01_split_dialogues.py"
     batch_size: 120000               # 每个 JSONL 文件包含的最大对话数
     # 以下参数可选
@@ -41,7 +41,7 @@ steps:
 
   # ----- 步骤02：按轮次分桶 -----
   02_bucket:
-    enabled: true
+    enabled: false
     script: "scripts/02_split_into_buckets.py"
     # 分桶策略：auto（自动，推荐）、percentile、equal_count、manual
     strategy: "manual"                 # 需要修改（通常用 auto）
@@ -60,7 +60,7 @@ steps:
 
   # ----- 步骤03：调用 Data-Juicer 清洗每个桶 -----
   03_clean:
-    enabled: true
+    enabled: false
     script: "scripts/03_clean_buckets_with_plots.py"
     configs_dir: "configs/configs_qa"    # 需要修改：存放清洗配置文件（YAML）的目录
     tag: "default"                       # 需要修改：清洗任务标签（用于输出子目录命名）
@@ -84,7 +84,7 @@ steps:
 
   # ----- 步骤04：应用清洗结果，生成最终训练数据 -----
   04_finalize:
-    enabled: True
+    enabled: false
     script: "scripts/04_apply_cleaned_loss_direct.py"
     source_run_id: null                # 可选，指定清洗步骤的 run_id（如 "20250430_143022_clean_default"），不填则自动取最新
     # 以下参数可选
@@ -108,19 +108,29 @@ steps:
     tag: "asr_noise"
     input_file: null                   # 输入 JSON 路径（若不使用 source_run_id）
     output_dir: null                   # 增强输出目录（默认 {final_output_dir}/{timestamp}_augment_{tag}）
+ 
+   # ASR 噪声增强的缓存文件路径（相对于任务目录或绝对路径）
+    asr_cache:
+      vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/abnormal_vectors.pkl"
+      pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/abnormal_pinyin.pkl"
+      prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/prev_to_abnormals.pkl"   # 可选，如果没有可以忽略
  # ----- 新增：增强操作权重配置 -----
  # 直接用整数相对大小表达设计意图（“我要让语序打乱出现次数是结巴模拟的 3 倍”）。
     augment_weights:
-      insert_filler: 2.0      # 插入语气词，权重较高
-      stutter: 1.0            # 结巴模拟
-      reorder: 3.0            # 语序打乱，提高出现概率
-      homophone: 1.5          # 同音字替换
-      random_delete: 0.5      # 随机删除，降低概率
-      random_entity_replace: 1.0
-      similarword: 2.0
-      word_repetition: 1.0
+      insert_filler: 0      # 插入语气词，权重较高
+      stutter: 0            # 结巴模拟
+      reorder: 0            # 语序打乱，提高出现概率
+      homophone: 0         # 同音字替换
+      random_delete: 0      # 随机删除，降低概率
+      random_entity_replace: 0
+      similarword: 0
+      word_repetition: 0
+      asr_noise: 5.0          # 让 ASR 噪声出现概率较高
     # 注意：apply_reorder 重复多次的做法已不需要，直接通过权重控制
     # 如果某操作权重为 0 或不列出，则该操作不会被选中。
+
+
+
 # ------------------- 日志配置 -------------------
 logging:
   level: "INFO"                        # 控制台输出级别（DEBUG/INFO/WARNING/ERROR）
