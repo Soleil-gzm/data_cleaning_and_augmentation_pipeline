@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 预处理ASR噪声词表（支持空格分隔的异常词列表）
-用法: python scripts/precompute_asr_vectors.py --csv_path path/to/prev_clean_summary.csv --model_path /path/to/local/model
+用法: 
+  命令行模式: python scripts/precompute_asr_vectors.py --csv_path <path> --model_path <path> [--output_dir <path>]
+  硬编码模式: python scripts/precompute_asr_vectors.py --hardcoded
 """
 import argparse
 import pickle
@@ -10,23 +12,45 @@ from pathlib import Path
 from sentence_transformers import SentenceTransformer
 from pypinyin import pinyin, Style
 
+# ========== 硬编码模式配置（请修改为实际路径）==========
+HARDCODED_CSV_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/prev_clean_summary.csv"
+HARDCODED_OUTPUT_DIR = None  # 设为 None 表示使用 CSV 所在目录，或指定具体路径
+HARDCODED_MODEL_PATH = "/home/zimeng/projects/data_process/models/paraphrase-multilingual-MiniLM-L12-v2"
+# ==================================================
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv_path", required=True, help="清洗后的词表 CSV，需包含 prev_word, abnormal_words 列")
-    parser.add_argument("--output_dir", type=str, default=None,
-                        help="输出目录（若不指定，则自动使用 CSV 文件所在目录）")
-    parser.add_argument("--model_path", required=True, help="本地 SentenceTransformer 模型文件夹路径")
+    parser.add_argument("--hardcoded", action="store_true", help="使用硬编码路径（需编辑脚本内部变量）")
+    parser.add_argument("--csv_path", type=str, help="清洗后的词表 CSV")
+    parser.add_argument("--output_dir", type=str, default=None, help="输出目录")
+    parser.add_argument("--model_path", type=str, help="本地 SentenceTransformer 模型文件夹路径")
     args = parser.parse_args()
 
-    csv_path = Path(args.csv_path)
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
+    if args.hardcoded:
+        csv_path = Path(HARDCODED_CSV_PATH)
+        model_path = HARDCODED_MODEL_PATH
+        if HARDCODED_OUTPUT_DIR:
+            output_dir = Path(HARDCODED_OUTPUT_DIR)
+        else:
+            output_dir = csv_path.parent
+        print(f"使用硬编码模式:")
+        print(f"  CSV路径: {csv_path}")
+        print(f"  模型路径: {model_path}")
+        print(f"  输出目录: {output_dir}")
     else:
-        output_dir = csv_path.parent
+        if not args.csv_path or not args.model_path:
+            parser.error("非硬编码模式下必须提供 --csv_path 和 --model_path")
+        csv_path = Path(args.csv_path)
+        model_path = args.model_path
+        if args.output_dir:
+            output_dir = Path(args.output_dir)
+        else:
+            output_dir = csv_path.parent
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 加载词表
-    df = pd.read_csv(args.csv_path)
+    df = pd.read_csv(csv_path)
     required_cols = ['prev_word', 'abnormal_words']
     for col in required_cols:
         if col not in df.columns:
@@ -41,20 +65,17 @@ def main():
         ab_str = str(row['abnormal_words']).strip()
         if not ab_str:
             continue
-        # 按空格拆分（多个连续空格处理为单个）
         abnormal_list = [w for w in ab_str.split() if w]
-        # 添加到全局集合
         all_abnormal_words.update(abnormal_list)
-        # 构建前置词映射
         if prev:
             prev_to_abnormals.setdefault(prev, set()).update(abnormal_list)
 
-    abnormal_words = sorted(list(all_abnormal_words))  # 排序保证可重现
+    abnormal_words = sorted(list(all_abnormal_words))
     print(f"异常词总数（拆分后）: {len(abnormal_words)}")
 
     # 2. 加载本地模型，计算向量
-    print(f"加载本地模型: {args.model_path}")
-    model = SentenceTransformer(args.model_path)
+    print(f"加载本地模型: {model_path}")
+    model = SentenceTransformer(model_path)
     print("计算异常词向量...")
     vectors = model.encode(abnormal_words, show_progress_bar=True, convert_to_numpy=True)
 
@@ -76,7 +97,7 @@ def main():
         pickle.dump(pinyin_dict, f)
     print(f"拼音映射已保存: {pinyin_file}")
 
-    # 5. 保存前置词->异常词列表映射（每个前置词对应的异常词已去重）
+    # 5. 保存前置词->异常词列表映射
     prev_to_abnormals = {k: list(v) for k, v in prev_to_abnormals.items()}
     prev_file = output_dir / "prev_to_abnormals.pkl"
     with open(prev_file, 'wb') as f:

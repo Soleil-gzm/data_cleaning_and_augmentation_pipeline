@@ -3,6 +3,7 @@ datas/
 logs/
 output/
 reports/
+*.pkl
 
 intermediate/
 generate_structure.py
