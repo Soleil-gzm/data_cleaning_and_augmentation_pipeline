@@ -191,7 +191,7 @@ def apply_random_entity_replace(sentence: str) -> str:
     except Exception as e:
         print(f"随机实体替换出错: {e}")
         return sentence
-    
+
 def apply_similarword(sentence: str) -> str:
     """使用同义词替换进行增强（替换词语为同义词）"""
     if not isinstance(sentence, str) or len(sentence.strip()) == 0:
@@ -211,21 +211,115 @@ def apply_word_repetition(sentence: str) -> str:
     if not isinstance(sentence, str) or len(sentence.strip()) == 0:
         return sentence
 
-    # 使用 jieba 分词
     words = jieba.lcut(sentence)
-    
-    # 筛选出长度 >= 2 的词语（排除标点、单字词）
     candidates = [w for w in words if len(w) >= 2 and re.match(r'[\u4e00-\u9fa5]+', w)]
     if not candidates:
         return sentence
 
     chosen = random.choice(candidates)
-    # 替换第一次出现的该词语
     new_sentence = sentence.replace(chosen, chosen + chosen, 1)
     return new_sentence
 
-# 注意：AUGMENT_FUNC_MAP 中仍保留 "asr_noise": apply_asr_noise
-# ================= 增强函数映射表（用于权重控制） =================
+# ================= 新增：ASR 噪声增强（集成到 pipeline）=================
+import random as _random
+import jieba as _jieba
+import re as _re
+
+_asr_augmenter = None
+
+def set_asr_augmenter(augmenter):
+    """设置全局 ASR 增强器实例（由主脚本调用）"""
+    global _asr_augmenter
+    _asr_augmenter = augmenter
+
+def get_asr_augmenter():
+    """获取 ASR 增强器实例"""
+    return _asr_augmenter
+
+def apply_asr_noise(sentence: str) -> str:
+    """
+    对句子应用 ASR 噪声增强（多位置、替换/插入、前置词匹配）
+    如果未设置增强器或句子无效，返回原句
+    """
+
+    print(f"[ASR_DEBUG] 函数被调用，句子: {sentence[:30]}...")
+    augmenter = get_asr_augmenter()
+    print(f"[ASR_DEBUG] augmenter 是否为 None: {augmenter is None}")
+    if augmenter is not None:
+        print(f"[ASR_DEBUG] 前置词映射大小: {len(augmenter.prev_to_abnormals)}")
+    else:
+        print("[ASR_DEBUG] augmenter 为 None，直接返回原句")
+        return sentence
+
+    augmenter = get_asr_augmenter()
+    if augmenter is None:
+        return sentence
+    if not sentence or not sentence.strip():
+        return sentence
+
+    MAX_OPERATIONS = 2
+    INSERT_PROB = 0.2
+    ALPHA = 0.7
+    RETRY_TIMES = 3
+
+    def enhance_once(sent):
+        words = _jieba.lcut(sent)
+        if len(words) < 2:
+            return sent
+
+        candidate_indices = []
+        for i in range(1, len(words)):
+            if words[i-1] in augmenter.prev_to_abnormals:
+                candidate_indices.append(i)
+        if not candidate_indices:
+            return sent
+
+        max_ops = min(MAX_OPERATIONS, len(candidate_indices))
+        selected = []
+        shuffled = _random.sample(candidate_indices, len(candidate_indices))
+        for idx in shuffled:
+            if not selected or all(abs(idx - x) >= 2 for x in selected):
+                selected.append(idx)
+                if len(selected) >= max_ops:
+                    break
+
+        operations = []
+        for pos in selected:
+            prev_word = words[pos-1]
+            target_word = words[pos]
+            candidates = augmenter.find_best_abnormals(
+                target_word,
+                prev_word=prev_word,
+                top_k=5,
+                alpha=ALPHA
+            )
+            if not candidates:
+                continue
+            chosen = _random.choice(candidates)
+            if _random.random() < INSERT_PROB:
+                operations.append((pos, chosen, True))
+            else:
+                operations.append((pos, chosen, False))
+
+        if not operations:
+            return sent
+
+        new_words = words[:]
+        for pos, new_word, is_insert in sorted(operations, key=lambda x: x[0], reverse=True):
+            if is_insert:
+                new_words.insert(pos, new_word)
+            else:
+                new_words[pos] = new_word
+        return ''.join(new_words)
+
+    original = sentence
+    for _ in range(RETRY_TIMES):
+        result = enhance_once(original)
+        if result != original:
+            return result
+    return original
+
+# ================= 增强函数映射表 =================
 AUGMENT_FUNC_MAP = {
     "insert_filler": apply_insert_filler,
     "stutter": apply_stutter,
@@ -238,7 +332,7 @@ AUGMENT_FUNC_MAP = {
     "asr_noise": apply_asr_noise,        # 新增强化
 }
 
-# ================= 多步叠加增强函数（支持权重） =================
+# ================= 多步叠加增强函数 =================
 
 def multi_step_augment(sentence: str, min_steps=1, max_steps=3, weights=None) -> str:
     """
@@ -255,10 +349,8 @@ def multi_step_augment(sentence: str, min_steps=1, max_steps=3, weights=None) ->
 
     # 构建 population 和对应的权重列表
     if weights is not None:
-        # 过滤掉权重为0或负数的操作
         valid_ops = [(name, w) for name, w in weights.items() if w > 0 and name in AUGMENT_FUNC_MAP]
         if not valid_ops:
-            # 若所有权重都无效，回退到均匀分布
             population = list(AUGMENT_FUNC_MAP.values())
             weight_list = None
         else:
@@ -291,7 +383,7 @@ def multi_step_augment(sentence: str, min_steps=1, max_steps=3, weights=None) ->
                 result = new_result
                 break
     return result
-    
+
 def augment_cell_multi(cell_value, num_variants=NUM_VARIANTS, min_steps=1, max_steps=3, augment_weights=None):
     """
     处理一个单元格（可能含 '/' 分隔的多条句子），对每条句子生成 num_variants 个变体。
@@ -316,100 +408,15 @@ def augment_cell_multi(cell_value, num_variants=NUM_VARIANTS, min_steps=1, max_s
         for _ in range(num_variants):
             variant = multi_step_augment(sent, min_steps, max_steps, weights=augment_weights)
             all_variants.append(variant)
-    
     return all_variants
 
-# ================= 新增：ASR 噪声增强（集成到 pipeline）=================
-_asr_augmenter = None
-
-def set_asr_augmenter(augmenter):
-    """设置全局 ASR 增强器实例（由主脚本调用）"""
-    global _asr_augmenter
-    _asr_augmenter = augmenter
-
-def get_asr_augmenter():
-    """获取 ASR 增强器实例"""
-    return _asr_augmenter
-
-def apply_asr_noise(sentence: str) -> str:
-    """
-    对句子应用 ASR 噪声增强（多位置、替换/插入、前置词匹配）
-    如果未设置增强器或句子无效，返回原句
-    """
-    augmenter = get_asr_augmenter()
-    if augmenter is None:
-        return sentence
-    if not sentence or not sentence.strip():
-        return sentence
-
-    # 内部参数（可后续配置化）
-    MAX_OPERATIONS = 2
-    INSERT_PROB = 0.2
-    ALPHA = 0.7
-    RETRY_TIMES = 3
-
-    def enhance_once(sent):
-        words = jieba.lcut(sent)
-        if len(words) < 2:
-            return sent
-
-        # 找出所有可操作的目标词索引（前置词在映射中）
-        candidate_indices = []
-        for i in range(1, len(words)):
-            if words[i-1] in augmenter.prev_to_abnormals:
-                candidate_indices.append(i)
-        if not candidate_indices:
-            return sent
-
-        # 随机选择最多 MAX_OPERATIONS 个互不相邻的位置
-        max_ops = min(MAX_OPERATIONS, len(candidate_indices))
-        selected = []
-        shuffled = random.sample(candidate_indices, len(candidate_indices))
-        for idx in shuffled:
-            if not selected or all(abs(idx - x) >= 2 for x in selected):
-                selected.append(idx)
-                if len(selected) >= max_ops:
-                    break
-
-        # 生成操作指令
-        operations = []
-        for pos in selected:
-            prev_word = words[pos-1]
-            target_word = words[pos]
-            candidates = augmenter.find_best_abnormals(
-                target_word,
-                prev_word=prev_word,
-                top_k=5,
-                alpha=ALPHA
-            )
-            if not candidates:
-                continue
-            chosen = random.choice(candidates)
-            if random.random() < INSERT_PROB:
-                operations.append((pos, chosen, True))   # 插入
-            else:
-                operations.append((pos, chosen, False))  # 替换
-
-        if not operations:
-            return sent
-
-        # 从后往前应用操作，避免索引偏移
-        new_words = words[:]
-        for pos, new_word, is_insert in sorted(operations, key=lambda x: x[0], reverse=True):
-            if is_insert:
-                new_words.insert(pos, new_word)
-            else:
-                new_words[pos] = new_word
-        return ''.join(new_words)
-
-    # 重试机制：确保变体与原句不同
-    original = sentence
-    for _ in range(RETRY_TIMES):
-        result = enhance_once(original)
-        if result != original:
-            return result
-    return original
-
-# 将 asr_noise 加入到增强函数映射表（如果还未加入）
-if 'asr_noise' not in AUGMENT_FUNC_MAP:
-    AUGMENT_FUNC_MAP['asr_noise'] = apply_asr_noise
+# ================= 辅助函数 =================
+def move_column_to_right(df, col_name, new_col_name):
+    """将新列移动到原列右侧"""
+    cols = df.columns.tolist()
+    if new_col_name not in cols:
+        return df
+    idx = cols.index(col_name)
+    cols.remove(new_col_name)
+    cols.insert(idx + 1, new_col_name)
+    return df[cols]

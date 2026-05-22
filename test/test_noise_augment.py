@@ -25,9 +25,9 @@ from common.asr_noise_augmenter import AsrNoiseAugmenter
 
 # ========== 请根据实际路径修改 ==========
 MODEL_PATH = "Models/paraphrase-multilingual-MiniLM-L12-v2"
-VECTORS_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_2_no_prob/abnormal_vectors.pkl"
-PINYIN_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_2_no_prob/abnormal_pinyin.pkl"
-PREV_MAP_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_2_no_prob/prev_to_abnormals.pkl"
+VECTORS_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/abnormal_vectors.pkl"
+PINYIN_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/abnormal_pinyin.pkl"
+PREV_MAP_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/prev_to_abnormals.pkl"
 # ======================================
 
 # 增强参数

@@ -111,9 +111,9 @@ steps:
  
    # ASR 噪声增强的缓存文件路径（相对于任务目录或绝对路径）t:
     asr_cache:
-      vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/abnormal_vectors.pkl"
-      pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/abnormal_pinyin.pkl"
-      prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1/prev_to_abnormals.pkl"
+      vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/abnormal_vectors.pkl"
+      pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/abnormal_pinyin.pkl"
+      prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/prev_to_abnormals.pkl"
       model_path: "Models/paraphrase-multilingual-MiniLM-L12-v2"   # 实际路径
  # ----- 新增：增强操作权重配置 -----
  # 直接用整数相对大小表达设计意图（“我要让语序打乱出现次数是结巴模拟的 3 倍”）。
