@@ -2,11 +2,12 @@
 """
 预处理ASR噪声词表（支持空格分隔的异常词列表）
 用法: 
+  直接运行（硬编码模式）: python scripts/precompute_asr_vectors.py
   命令行模式: python scripts/precompute_asr_vectors.py --csv_path <path> --model_path <path> [--output_dir <path>]
-  硬编码模式: python scripts/precompute_asr_vectors.py --hardcoded
 """
 import argparse
 import pickle
+import sys
 import pandas as pd
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
@@ -25,6 +26,10 @@ def main():
     parser.add_argument("--output_dir", type=str, default=None, help="输出目录")
     parser.add_argument("--model_path", type=str, help="本地 SentenceTransformer 模型文件夹路径")
     args = parser.parse_args()
+
+    # 如果没有提供任何参数，则自动启用硬编码模式
+    if len(sys.argv) == 1:
+        args.hardcoded = True
 
     if args.hardcoded:
         csv_path = Path(HARDCODED_CSV_PATH)
