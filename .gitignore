@@ -3,7 +3,7 @@ datas/
 logs/
 output/
 reports/
-
+.pkl
 intermediate/
 generate_structure.py
 scripts/common/__pycache__
@@ -13,4 +13,7 @@ intermediate_former/
 task_20260429/
 configs/task_config/
 Models/
-
+Models/Qwen2.5-1.5B-Instruct
+Models/gpt2-chinese-cluecorpussmall
+Models/paraphrase-multilingual-MiniLM-L12-v2
+resources/prev_clean
