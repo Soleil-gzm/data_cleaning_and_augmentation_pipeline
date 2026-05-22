@@ -202,43 +202,6 @@ def main():
         else:
             logger.info("未提供增强权重，将使用均匀分布")
 
-        # # ----- 加载 ASR 增强器（如果配置了 asr_cache）-----
-        # asr_cache_cfg = step_cfg.get('asr_cache', {})
-        # if asr_cache_cfg:
-        #     vectors_path = asr_cache_cfg.get('vectors_path')
-        #     pinyin_path = asr_cache_cfg.get('pinyin_path')
-        #     prev_map_path = asr_cache_cfg.get('prev_map_path')
-        #     model_path = asr_cache_cfg.get('model_path')
-        #     # 相对路径转换为绝对路径（相对于 task_dir）
-        #     if vectors_path and not Path(vectors_path).is_absolute():
-        #         vectors_path = task_dir / vectors_path
-        #     if pinyin_path and not Path(pinyin_path).is_absolute():
-        #         pinyin_path = task_dir / pinyin_path
-        #     if prev_map_path and not Path(prev_map_path).is_absolute():
-        #         prev_map_path = task_dir / prev_map_path
-        #     if model_path and not Path(model_path).is_absolute():
-        #         model_path = task_dir / model_path
-        #     try:
-        #         from common.asr_noise_augmenter import AsrNoiseAugmenter
-        #         asr_augmenter = AsrNoiseAugmenter(
-        #             vectors_path=vectors_path,
-        #             pinyin_path=pinyin_path,
-        #             prev_map_path=prev_map_path if prev_map_path and Path(prev_map_path).exists() else None,
-        #             model_path=model_path
-        #         )
-        #         aug_utils.set_asr_augmenter(asr_augmenter)
-        #         logger.info(f"ASR 增强器已加载，模型路径: {model_path}")
-        #         logger.info(f"  异常词数量: {len(asr_augmenter.abnormal_words)}")
-        #         logger.info(f"  前置词映射大小: {len(asr_augmenter.prev_to_abnormals)}")
-        #         if len(asr_augmenter.prev_to_abnormals) > 0:
-        #             logger.debug(f"  前置词示例: {list(asr_augmenter.prev_to_abnormals.keys())[:10]}")
-        #         else:
-        #             logger.warning("  前置词映射为空！请检查 prev_to_abnormals.pkl 文件是否包含有效数据。")
-        #     except Exception as e:
-        #         logger.warning(f"加载 ASR 增强器失败: {e}，将禁用 asr_noise 增强")
-        # else:
-        #     logger.info("未配置 asr_cache，将禁用 asr_noise 增强")
-        
         asr_cache_cfg = step_cfg.get('asr_cache', {})
         if asr_cache_cfg:
             # 项目根目录 = base_dir (intermediate) 的父目录
