@@ -7,39 +7,41 @@ from pypinyin import pinyin, Style
 import Levenshtein
 
 class AsrNoiseAugmenter:
-    def __init__(self, vectors_path, pinyin_path, prev_map_path=None, model_name='Models/paraphrase-multilingual-MiniLM-L12-v2'):
+    def __init__(self, vectors_path, pinyin_path, prev_map_path=None,
+                 model_path=None, model_name='paraphrase-multilingual-MiniLM-L12-v2'):
         """
         :param vectors_path: abnormal_vectors.pkl 文件路径
         :param pinyin_path: abnormal_pinyin.pkl 文件路径
         :param prev_map_path: prev_to_abnormals.pkl 文件路径（可选）
-        :param model_name: 编码器模型名称
+        :param model_path: 本地 SentenceTransformer 模型文件夹路径（推荐）
+        :param model_name: 模型名称（当 model_path 为 None 时使用，可能触发联网）
         """
         vectors_path = Path(vectors_path)
         pinyin_path = Path(pinyin_path)
         
-        # 加载异常词向量
         with open(vectors_path, 'rb') as f:
             vec_data = pickle.load(f)
         self.abnormal_words = vec_data['words']
         self.abnormal_vectors = vec_data['vectors']
         self.word_to_idx = {w: i for i, w in enumerate(self.abnormal_words)}
         
-        # 加载拼音映射
         with open(pinyin_path, 'rb') as f:
             self.pinyin_dict = pickle.load(f)
         
-        # 加载前置词映射（可选）
         if prev_map_path and Path(prev_map_path).exists():
             with open(prev_map_path, 'rb') as f:
                 self.prev_to_abnormals = pickle.load(f)
         else:
             self.prev_to_abnormals = {}
         
-        # 初始化编码器
-        self.encoder = SentenceTransformer(model_name)
+        # 加载编码器：优先使用本地路径
+        if model_path and Path(model_path).exists():
+            self.encoder = SentenceTransformer(str(model_path))
+        else:
+            self.encoder = SentenceTransformer(model_name)
+        
         self.dim = self.abnormal_vectors.shape[1]
     
-    # 以下方法保持不变 ...
     def _pinyin_similarity(self, w1, w2):
         p1 = self.pinyin_dict.get(w1, '')
         p2 = self.pinyin_dict.get(w2, '')

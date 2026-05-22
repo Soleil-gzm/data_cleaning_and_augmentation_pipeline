@@ -279,6 +279,37 @@ def main():
     if augment_weights:
         logger.info(f"使用自定义增强权重: {augment_weights}")
 
+        # ========== 新增：加载 ASR 增强器 ==========
+        asr_cache_cfg = step_cfg.get('asr_cache', {})
+        if asr_cache_cfg:
+            vectors_path = asr_cache_cfg.get('vectors_path')
+            pinyin_path = asr_cache_cfg.get('pinyin_path')
+            prev_map_path = asr_cache_cfg.get('prev_map_path')
+            model_path = asr_cache_cfg.get('model_path')
+            # 路径转换：如果是相对路径，则相对于任务目录（task_dir）
+            if vectors_path and not Path(vectors_path).is_absolute():
+                vectors_path = task_dir / vectors_path
+            if pinyin_path and not Path(pinyin_path).is_absolute():
+                pinyin_path = task_dir / pinyin_path
+            if prev_map_path and not Path(prev_map_path).is_absolute():
+                prev_map_path = task_dir / prev_map_path
+            if model_path and not Path(model_path).is_absolute():
+                model_path = Path(model_path).absolute()  # 模型路径通常用绝对路径
+            try:
+                from common.asr_noise_augmenter import AsrNoiseAugmenter
+                asr_augmenter = AsrNoiseAugmenter(
+                    vectors_path=vectors_path,
+                    pinyin_path=pinyin_path,
+                    prev_map_path=prev_map_path if prev_map_path and Path(prev_map_path).exists() else None,
+                    model_path=model_path
+                )
+                aug_utils.set_asr_augmenter(asr_augmenter)
+                logger.info(f"ASR 增强器已加载，模型路径: {model_path}")
+            except Exception as e:
+                logger.warning(f"加载 ASR 增强器失败: {e}，将禁用 asr_noise 增强")
+        else:
+            logger.info("未配置 asr_cache，将禁用 asr_noise 增强")
+
     # 加载原始数据
     logger.info("加载原始数据...")
     try:

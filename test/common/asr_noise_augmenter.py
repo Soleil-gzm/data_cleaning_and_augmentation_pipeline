@@ -38,12 +38,10 @@ class AsrNoiseAugmenter:
         if model_path and Path(model_path).exists():
             self.encoder = SentenceTransformer(str(model_path))
         else:
-            # 如果 model_path 无效，回退到 model_name（但会尝试联网，不推荐）
             self.encoder = SentenceTransformer(model_name)
         
         self.dim = self.abnormal_vectors.shape[1]
     
-    # 以下方法保持不变
     def _pinyin_similarity(self, w1, w2):
         p1 = self.pinyin_dict.get(w1, '')
         p2 = self.pinyin_dict.get(w2, '')
