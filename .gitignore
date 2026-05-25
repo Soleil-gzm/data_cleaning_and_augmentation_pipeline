@@ -14,4 +14,6 @@ intermediate_former/
 task_20260429/
 configs/task_config/
 Models/
+__pycache__
+test/common/__pycache__
 
