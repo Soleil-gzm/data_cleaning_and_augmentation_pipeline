@@ -3,7 +3,8 @@ datas/
 logs/
 output/
 reports/
-.pkl
+*.pkl
+
 intermediate/
 generate_structure.py
 scripts/common/__pycache__
@@ -17,3 +18,6 @@ Models/Qwen2.5-1.5B-Instruct
 Models/gpt2-chinese-cluecorpussmall
 Models/paraphrase-multilingual-MiniLM-L12-v2
 resources/prev_clean
+__pycache__
+test/common/__pycache__
+

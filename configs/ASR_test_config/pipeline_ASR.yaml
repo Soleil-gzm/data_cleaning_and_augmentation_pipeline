@@ -40,7 +40,7 @@ steps:
   02_bucket:
     enabled: true
     script: "scripts/02_split_into_buckets.py"
-    strategy: "manual"               # 分桶策略：auto（自动推荐）、percentile、equal_count、manual（建议使用manual，可以保证较好的清洗效果）
+    strategy: "auto"               # 分桶策略：auto（自动推荐）、percentile、equal_count、manual
     # 自动分桶参数（仅当 strategy 为 auto/percentile/equal_count 时生效）
     auto_params:
       percentiles: [0, 25, 50, 75, 90, 95, 100]   # 百分位点（用于 percentile 或 auto 策略）

@@ -4,7 +4,7 @@
 # ============================================================
 
 # ------------------- 基础任务信息 -------------------
-task_name: "task_0506_asr"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
+task_name: "ASR_0506_v1"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
 resume: false                      # 是否启用断点续跑（true=跳过已完成步骤）
 
 # ------------------- 原始数据路径 -------------------
@@ -60,7 +60,7 @@ steps:
 
   # ----- 步骤03：调用 Data-Juicer 清洗每个桶 -----
   03_clean:
-    enabled: true
+    enabled: false
     script: "scripts/03_clean_buckets_with_plots.py"
     configs_dir: "configs/configs_qa"    # 需要修改：存放清洗配置文件（YAML）的目录
     tag: "default"                       # 需要修改：清洗任务标签（用于输出子目录命名）
@@ -106,14 +106,31 @@ steps:
     seed: 42                           # 随机种子
     # tag: "default"                     # 增强任务标签
     tag: "asr_noise"
-    # ---------- 新增：词表噪声增强 ----------
-    noise_csv_path: "resources/prev_clean_summary.csv"
-    noise_replace_prob: 0.3        # 替换概率（遇到前置词时）
-    noise_insert: false            # false=替换模式，true=插入模式
-    # ----------------------------------------
-    # 以下参数可选
     input_file: null                   # 输入 JSON 路径（若不使用 source_run_id）
     output_dir: null                   # 增强输出目录（默认 {final_output_dir}/{timestamp}_augment_{tag}）
+ 
+   # ASR 噪声增强的缓存文件路径（相对于任务目录或绝对路径）t:
+    asr_cache:
+      vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/abnormal_vectors.pkl"
+      pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/abnormal_pinyin.pkl"
+      prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/prev_to_abnormals.pkl"
+      model_path: "Models/paraphrase-multilingual-MiniLM-L12-v2"   # 实际路径
+ # ----- 新增：增强操作权重配置 -----
+ # 直接用整数相对大小表达设计意图（“我要让语序打乱出现次数是结巴模拟的 3 倍”）。
+    augment_weights:
+      insert_filler: 0      # 插入语气词，权重较高
+      stutter: 0            # 结巴模拟
+      reorder: 0            # 语序打乱，提高出现概率
+      homophone: 0         # 同音字替换
+      random_delete: 0      # 随机删除，降低概率
+      random_entity_replace: 0
+      similarword: 0
+      word_repetition: 0
+      asr_noise: 5.0          # 让 ASR 噪声出现概率较高
+    # 注意：apply_reorder 重复多次的做法已不需要，直接通过权重控制
+    # 如果某操作权重为 0 或不列出，则该操作不会被选中。
+
+
 
 # ------------------- 日志配置 -------------------
 logging:

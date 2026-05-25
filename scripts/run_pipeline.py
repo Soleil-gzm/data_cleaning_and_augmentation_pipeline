@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 全自动数据清洗与增强流水线
-用法: python scripts/run_pipeline.py --config configs/task_config/pipeline_config.yaml [--step STEP_NAME]
+用法: python scripts/run_pipeline.py --config pipeline_config.yaml [--step STEP_NAME]
 """
 
 import os

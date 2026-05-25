@@ -1,120 +1,182 @@
 #!/usr/bin/env python3
 """
-测试词表噪声增强效果
-用法:
-    python test_noise_augment.py --csv <词表文件> --text "一句话"
-    python test_noise_augment.py --csv <词表文件> --sentences "句子1" "句子2" "句子3"
-    python test_noise_augment.py --csv <词表文件> --input input.txt --output output.txt
-    python test_noise_augment.py --csv <词表文件> --text "我的账号" --replace_prob 0.5 --insert
+ASR 噪声增强器完整测试脚本（硬编码路径版）
+功能：
+1. 一次性扫描句子，找出所有符合前置词条件的目标词位置
+2. 随机选择最多 MAX_OPERATIONS 个互不相邻的位置
+3. 对每个选中位置独立决定替换或插入（概率由 INSERT_PROB 控制）
+4. 从异常词候选中随机均匀选择一个进行替换/插入（可扩展为按频率加权）
+5. 从后往前应用所有修改，避免索引偏移
+6. 若增强后句子与原句相同，则重试最多 RETRY_TIMES 次
+
+使用方法：
+- 修改下方的 MODEL_PATH, VECTORS_PATH, PINYIN_PATH, PREV_MAP_PATH
+- python test_asr_hardcoded.py
 """
-
+import sys
 import random
-import re
-import argparse
-from pathlib import Path
-import pandas as pd
 import jieba
+import re
+from pathlib import Path
 
-# ---------- NoiseAugmenter 类（与 common/augment_with_noise.py 保持一致） ----------
-def parse_abnormal_words(abnormal_str: str):
-    """解析 '章(0.667) 张(0.333)' 格式"""
-    items = abnormal_str.split()
-    result = []
-    for item in items:
-        match = re.match(r'(.+)\(([0-9.]+)\)', item)
-        if match:
-            word = match.group(1)
-            prob = float(match.group(2))
-            result.append((word, prob))
-    return result
+# 添加项目根目录到路径（假设脚本放在项目根目录或 test/ 下）
+sys.path.insert(0, str(Path(__file__).parent))
+from common.asr_noise_augmenter import AsrNoiseAugmenter
 
-class NoiseAugmenter:
-    def __init__(self, csv_path: str, replace_prob: float = 0.3, use_insert: bool = False):
-        self.replace_prob = replace_prob
-        self.use_insert = use_insert
-        self.patterns = {}
-        df = pd.read_csv(csv_path)
-        for _, row in df.iterrows():
-            prev = row['prev_word']
-            abnormal_list = parse_abnormal_words(row['abnormal_words'])
-            if abnormal_list:
-                self.patterns[prev] = abnormal_list
+# ========== 请根据实际路径修改 ==========
+MODEL_PATH = "Models/paraphrase-multilingual-MiniLM-L12-v2"
+VECTORS_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/abnormal_vectors.pkl"
+PINYIN_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/abnormal_pinyin.pkl"
+PREV_MAP_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/prev_to_abnormals.pkl"
+# ======================================
 
-    def augment_sentence(self, sentence: str, seed: int = None):
-        if seed is not None:
-            random.seed(seed)
-        words = list(jieba.cut(sentence))
-        new_words = []
-        i = 0
-        while i < len(words):
-            current = words[i]
-            if current in self.patterns and i + 1 < len(words):
-                if random.random() < self.replace_prob:
-                    candidates = self.patterns[current]
-                    abnormal_words = [w for w, p in candidates]
-                    probs = [p for w, p in candidates]
-                    selected = random.choices(abnormal_words, weights=probs, k=1)[0]
-                    if self.use_insert:
-                        new_words.append(current)
-                        new_words.append(selected)
-                        i += 1
-                    else:
-                        new_words.append(current)
-                        new_words.append(selected)
-                        i += 2
-                    continue
-            new_words.append(current)
-            i += 1
-        return ''.join(new_words)
+# 增强参数
+ALPHA = 0.7                 # 拼音权重（0~1，越大越偏向拼音）
+MAX_OPERATIONS = 2          # 每个句子最多执行的操作次数（替换或插入）
+INSERT_PROB = 0.1           # 插入操作的概率（否则为替换）
+RETRY_TIMES = 3             # 若变体与原句相同，最多重试次数
+RANDOM_SEED = 42            # 随机种子，便于复现
 
-# ---------- 测试主函数 ----------
+def enhance_sentence_once(sentence: str, augmenter: AsrNoiseAugmenter) -> str:
+    """
+    对单个句子进行一次增强（可能修改多个位置）
+    返回增强后的句子（可能与原句相同）
+    """
+    if not sentence or not sentence.strip():
+        return sentence
+    words = jieba.lcut(sentence)
+    if len(words) < 2:
+        return sentence
+
+    # 1. 找出所有可操作的目标词索引（i >= 1 且 words[i-1] 是前置词）
+    candidate_indices = []
+    for i in range(1, len(words)):
+        if words[i-1] in augmenter.prev_to_abnormals:
+            candidate_indices.append(i)
+
+    if not candidate_indices:
+        return sentence
+
+    # 2. 随机选择最多 MAX_OPERATIONS 个互不相邻的位置（避免前置词冲突）
+    max_ops = min(MAX_OPERATIONS, len(candidate_indices))
+    selected = []
+    # 随机打乱候选列表
+    shuffled = random.sample(candidate_indices, len(candidate_indices))
+    for idx in shuffled:
+        if not selected or all(abs(idx - x) >= 2 for x in selected):
+            selected.append(idx)
+            if len(selected) >= max_ops:
+                break
+
+    # 3. 为每个选中位置生成操作（替换或插入）
+    operations = []  # (pos, new_word, is_insert)
+    for pos in selected:
+        prev_word = words[pos-1]
+        target_word = words[pos]
+        # 获取候选异常词（基于前置词限制）
+        candidates = augmenter.find_best_abnormals(
+            target_word,
+            prev_word=prev_word,
+            top_k=5,
+            alpha=ALPHA
+        )
+        if not candidates:
+            continue
+        chosen = random.choice(candidates)
+        if random.random() < INSERT_PROB:
+            # 插入：在目标词之前插入异常词，原词保留
+            operations.append((pos, chosen, True))
+        else:
+            # 替换：用异常词替换目标词
+            operations.append((pos, chosen, False))
+
+    if not operations:
+        return sentence
+
+    # 4. 从后往前应用操作（避免索引偏移）
+    new_words = words[:]
+    for pos, new_word, is_insert in sorted(operations, key=lambda x: x[0], reverse=True):
+        if is_insert:
+            new_words.insert(pos, new_word)
+        else:
+            new_words[pos] = new_word
+    return ''.join(new_words)
+
+def enhance_sentence_with_retry(sentence: str, augmenter: AsrNoiseAugmenter) -> str:
+    """
+    包装增强函数，如果结果与原句相同则重试，直到不同或达到最大重试次数
+    """
+    original = sentence
+    for attempt in range(RETRY_TIMES):
+        new_sent = enhance_sentence_once(original, augmenter)
+        if new_sent != original:
+            return new_sent
+    return original  # 多次尝试后仍相同则返回原句
+
 def main():
-    parser = argparse.ArgumentParser(description="测试词表噪声增强效果")
-    parser.add_argument("--csv", required=True, help="prev_clean_summary.csv 文件路径")
-    parser.add_argument("--text", type=str, help="待增强的单句（与 --sentences 互斥）")
-    parser.add_argument("--sentences", nargs='+', help="多个句子，空格分隔")
-    parser.add_argument("--input", type=str, help="输入文件（每行一句）")
-    parser.add_argument("--output", type=str, help="输出文件（与 --input 搭配）")
-    parser.add_argument("--replace_prob", type=float, default=0.3, help="替换概率")
-    parser.add_argument("--insert", action="store_true", help="插入模式（默认替换）")
-    parser.add_argument("--seed", type=int, default=42, help="随机种子")
-    args = parser.parse_args()
+    random.seed(RANDOM_SEED)
+    jieba.initialize()
+
+    print("=" * 70)
+    print("ASR 噪声增强器测试（一次性定位多个非重叠位置 + 批量操作）")
+    print("=" * 70)
+
+    # 检查文件存在性
+    for path, name in [(VECTORS_PATH, "向量文件"), (PINYIN_PATH, "拼音文件"), (MODEL_PATH, "模型文件夹")]:
+        if not Path(path).exists():
+            print(f"错误：{name} 不存在: {path}")
+            sys.exit(1)
+    if not Path(PREV_MAP_PATH).exists():
+        print(f"警告：前置词映射文件不存在，将无法使用前置词限制: {PREV_MAP_PATH}")
+        print("增强器会尝试加载该文件，若文件缺失则跳过前置词匹配。")
 
     # 加载增强器
-    augmenter = NoiseAugmenter(args.csv, args.replace_prob, args.insert)
+    print("正在加载 ASR 增强器...")
+    augmenter = AsrNoiseAugmenter(
+        vectors_path=VECTORS_PATH,
+        pinyin_path=PINYIN_PATH,
+        prev_map_path=PREV_MAP_PATH if Path(PREV_MAP_PATH).exists() else None,
+        model_path=MODEL_PATH
+    )
+    print(f"异常词数量: {len(augmenter.abnormal_words)}")
+    print(f"前置词种类: {len(augmenter.prev_to_abnormals)}")
+    print("加载完成。\n")
 
-    if args.sentences:
-        # 多个句子模式
-        for i, sent in enumerate(args.sentences):
-            original = sent.strip()
-            if not original:
-                continue
-            augmented = augmenter.augment_sentence(original, args.seed)
-            print(f"[{i+1}] 原始: {original}")
-            print(f"    增强: {augmented}\n")
-    elif args.text:
-        # 单句模式
-        original = args.text.strip()
-        augmented = augmenter.augment_sentence(original, args.seed)
-        print(f"原始句子: {original}")
-        print(f"增强句子: {augmented}")
-    elif args.input:
-        # 文件模式
-        input_path = Path(args.input)
-        if not input_path.exists():
-            print(f"错误：输入文件不存在 {input_path}")
-            return
-        output_path = Path(args.output) if args.output else input_path.with_suffix(".aug.txt")
-        with open(input_path, 'r', encoding='utf-8') as fin, \
-             open(output_path, 'w', encoding='utf-8') as fout:
-            for line in fin:
-                line = line.strip()
-                if line:
-                    aug_line = augmenter.augment_sentence(line, args.seed)
-                    fout.write(aug_line + '\n')
-        print(f"增强完成，结果保存至: {output_path}")
-    else:
-        print("请提供 --text 或 --sentences 或 --input")
+    # 测试句子集（可根据需要修改）
+    test_sentences = [
+        "我的信用卡逾期了，怎么办？",
+        "请尽快还款，否则会影响征信。",
+        "这个月账单我已经还清了。",
+        "客服态度很好，帮我处理了问题。",
+        "我需要申请分期还款。"
+    ]
+
+    print("【句子增强测试】每个原句生成 3 个变体")
+    print("-" * 70)
+    for original in test_sentences:
+        variants = []
+        for _ in range(3):
+            variant = enhance_sentence_with_retry(original, augmenter)
+            variants.append(variant)
+        print(f"原句: {original}")
+        for i, v in enumerate(variants, 1):
+            print(f"  变体{i}: {v}")
+        print()
+
+    # 展示部分前置词映射示例
+    print("【前置词映射示例】（前5个）")
+    sample_prev = list(augmenter.prev_to_abnormals.keys())[:5]
+    for prev in sample_prev:
+        abnormals = augmenter.prev_to_abnormals[prev][:10]  # 只显示前10个
+        print(f"{prev} -> {abnormals}")
+
+    # 可选：演示单个词的候选词（方便调试）
+    print("\n【单词语义+拼音匹配演示】")
+    demo_words = ["逾期", "还款", "征信", "客服", "银行"]
+    for w in demo_words:
+        # 不指定前置词，候选集为所有异常词
+        cand = augmenter.find_best_abnormals(w, top_k=5, alpha=ALPHA)
+        print(f"{w} -> {cand}")
 
 if __name__ == "__main__":
     main()
