@@ -16,4 +16,5 @@ configs/task_config/
 Models/
 __pycache__
 test/common/__pycache__
-
+Models/gpt2-chinese-cluecorpussmall
+Models/Qwen2.5-1.5B-Instruct
