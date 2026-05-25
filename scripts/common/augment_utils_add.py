@@ -236,21 +236,95 @@ def get_asr_augmenter():
     """获取 ASR 增强器实例"""
     return _asr_augmenter
 
+# def apply_asr_noise(sentence: str) -> str:
+#     """
+#     对句子应用 ASR 噪声增强（多位置、替换/插入、前置词匹配）
+#     如果未设置增强器或句子无效，返回原句
+#     增加极性检测，避免肯定/否定词被翻转
+#     """
+
+#     print(f"[ASR_DEBUG] 函数被调用，句子: {sentence[:30]}...")
+#     augmenter = get_asr_augmenter()
+#     print(f"[ASR_DEBUG] augmenter 是否为 None: {augmenter is None}")
+#     if augmenter is not None:
+#         print(f"[ASR_DEBUG] 前置词映射大小: {len(augmenter.prev_to_abnormals)}")
+#     else:
+#         print("[ASR_DEBUG] augmenter 为 None，直接返回原句")
+#         return sentence
+
+#     augmenter = get_asr_augmenter()
+#     if augmenter is None:
+#         return sentence
+#     if not sentence or not sentence.strip():
+#         return sentence
+
+#     MAX_OPERATIONS = 2
+#     INSERT_PROB = 0.2
+#     ALPHA = 0.7
+#     RETRY_TIMES = 3
+
+#     def enhance_once(sent):
+#         words = _jieba.lcut(sent)
+#         if len(words) < 2:
+#             return sent
+
+#         candidate_indices = []
+#         for i in range(1, len(words)):
+#             if words[i-1] in augmenter.prev_to_abnormals:
+#                 candidate_indices.append(i)
+#         if not candidate_indices:
+#             return sent
+
+#         max_ops = min(MAX_OPERATIONS, len(candidate_indices))
+#         selected = []
+#         shuffled = _random.sample(candidate_indices, len(candidate_indices))
+#         for idx in shuffled:
+#             if not selected or all(abs(idx - x) >= 2 for x in selected):
+#                 selected.append(idx)
+#                 if len(selected) >= max_ops:
+#                     break
+
+#         operations = []
+#         for pos in selected:
+#             prev_word = words[pos-1]
+#             target_word = words[pos]
+#             candidates = augmenter.find_best_abnormals(
+#                 target_word,
+#                 prev_word=prev_word,
+#                 top_k=5,
+#                 alpha=ALPHA
+#             )
+#             if not candidates:
+#                 continue
+#             chosen = _random.choice(candidates)
+#             if _random.random() < INSERT_PROB:
+#                 operations.append((pos, chosen, True))
+#             else:
+#                 operations.append((pos, chosen, False))
+
+#         if not operations:
+#             return sent
+
+#         new_words = words[:]
+#         for pos, new_word, is_insert in sorted(operations, key=lambda x: x[0], reverse=True):
+#             if is_insert:
+#                 new_words.insert(pos, new_word)
+#             else:
+#                 new_words[pos] = new_word
+#         return ''.join(new_words)
+
+#     original = sentence
+#     for _ in range(RETRY_TIMES):
+#         result = enhance_once(original)
+#         if result != original:
+#             return result
+#     return original
+
 def apply_asr_noise(sentence: str) -> str:
     """
     对句子应用 ASR 噪声增强（多位置、替换/插入、前置词匹配）
-    如果未设置增强器或句子无效，返回原句
+    增加极性检测，避免肯定/否定词被翻转
     """
-
-    print(f"[ASR_DEBUG] 函数被调用，句子: {sentence[:30]}...")
-    augmenter = get_asr_augmenter()
-    print(f"[ASR_DEBUG] augmenter 是否为 None: {augmenter is None}")
-    if augmenter is not None:
-        print(f"[ASR_DEBUG] 前置词映射大小: {len(augmenter.prev_to_abnormals)}")
-    else:
-        print("[ASR_DEBUG] augmenter 为 None，直接返回原句")
-        return sentence
-
     augmenter = get_asr_augmenter()
     if augmenter is None:
         return sentence
@@ -261,6 +335,10 @@ def apply_asr_noise(sentence: str) -> str:
     INSERT_PROB = 0.2
     ALPHA = 0.7
     RETRY_TIMES = 3
+
+    # 定义肯定词和否定词集合（可根据实际情况扩充）
+    AFFIRMATIVE_WORDS = {"是", "有", "能", "可以", "行", "好", "对", "是的", "没错", "肯定", "必须", "需要", "会", "应该"}
+    NEGATIVE_WORDS = {"不", "没", "无", "别", "不要", "不用", "不行", "不是", "没有", "不能", "不可以", "否定", "不会", "不该"}
 
     def enhance_once(sent):
         words = _jieba.lcut(sent)
@@ -295,7 +373,40 @@ def apply_asr_noise(sentence: str) -> str:
             )
             if not candidates:
                 continue
-            chosen = _random.choice(candidates)
+
+            # 极性检测：寻找与目标词极性一致的候选词
+            chosen = None
+            # 确定目标词的极性（如果既不是肯定也不是否定，则极性为 None）
+            target_polarity = None
+            if target_word in AFFIRMATIVE_WORDS:
+                target_polarity = "affirmative"
+            elif target_word in NEGATIVE_WORDS:
+                target_polarity = "negative"
+
+            # 尝试最多5次选择一个不会翻转极性的候选
+            for _ in range(5):
+                cand = _random.choice(candidates)
+                # 如果目标词没有极性要求，直接接受
+                if target_polarity is None:
+                    chosen = cand
+                    break
+                # 检查候选词的极性
+                if cand in AFFIRMATIVE_WORDS:
+                    cand_polarity = "affirmative"
+                elif cand in NEGATIVE_WORDS:
+                    cand_polarity = "negative"
+                else:
+                    cand_polarity = None
+                # 如果极性一致（或候选无极性），则接受
+                if cand_polarity == target_polarity or cand_polarity is None:
+                    chosen = cand
+                    break
+                # 否则继续尝试下一个
+
+            if chosen is None:
+                # 找不到合适的候选，跳过这个位置
+                continue
+
             if _random.random() < INSERT_PROB:
                 operations.append((pos, chosen, True))
             else:
