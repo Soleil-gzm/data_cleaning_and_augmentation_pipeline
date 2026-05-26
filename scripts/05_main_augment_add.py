@@ -104,17 +104,24 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
         num_variants = max(1, min(5, len(enhanceable) // 2))
 
     aug_kwargs = config["augment_kwargs"]
+    msg_prob = config.get("message_augment_prob", 1.0)   # 获取概率
 
+    # 生成多个变体（外层循环）
     for var_id in range(num_variants):
         try:
             new_dialogue = deepcopy(original_dialogue)
             new_messages = new_dialogue["messages"]
-            selected = enhanceable[:]  # 全部选择（可改为随机选择部分）
+            selected = enhanceable[:]  # 复制列表，所有可增强索引
+            # 内层循环，负责遍历该对话副本中所有可增强的消息，并对每一条消息独立地进行增强（可能修改、可能跳过）。
             for idx in selected:
+                # 按概率跳过增强
+                if rng.random() > msg_prob:
+                    logger.debug(f"  跳过消息 {idx}，不增强（概率未命中）")
+                    continue
+
                 original_text = new_messages[idx].get("content", "")
                 if not original_text:
                     continue
-                # 调用增强函数，传递 augment_weights
                 variants_list = aug_utils.augment_cell_multi(original_text, **aug_kwargs)
                 # 调试：记录返回的变体列表
                 logger.debug(f"  原始文本: {original_text[:50]}...")
@@ -183,6 +190,9 @@ def main():
         else:
             augment_weights = {}
         
+        # ----- 新增：读取消息增强概率 -----
+        message_augment_prob = step_cfg.get('message_augment_prob', 1.0)
+
         # ----- 确定输入文件 -----
         if source_run_id:
             input_file = task_dir / "final_training_data" / source_run_id / "training_data.json"
@@ -307,8 +317,9 @@ def main():
         "target_roles": target_roles,
         "only_loss_true": only_loss_true,
         "adaptive_variants": adaptive_variants,
+        "message_augment_prob": message_augment_prob,   # 新增
         "augment_kwargs": {
-            "num_variants": 1,
+            "num_variants": 1,      # 可拓展：对一条消息生成多少个候选修改文本。但当前实现只用了第一个，因此实际无效果，设为1即可
             "min_steps": 2,
             "max_steps": 3,
             "augment_weights": augment_weights   # 传递权重配置（独立模式下为 None）

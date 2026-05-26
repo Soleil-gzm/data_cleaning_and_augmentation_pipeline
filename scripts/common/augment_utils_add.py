@@ -236,90 +236,6 @@ def get_asr_augmenter():
     """获取 ASR 增强器实例"""
     return _asr_augmenter
 
-# def apply_asr_noise(sentence: str) -> str:
-#     """
-#     对句子应用 ASR 噪声增强（多位置、替换/插入、前置词匹配）
-#     如果未设置增强器或句子无效，返回原句
-#     增加极性检测，避免肯定/否定词被翻转
-#     """
-
-#     print(f"[ASR_DEBUG] 函数被调用，句子: {sentence[:30]}...")
-#     augmenter = get_asr_augmenter()
-#     print(f"[ASR_DEBUG] augmenter 是否为 None: {augmenter is None}")
-#     if augmenter is not None:
-#         print(f"[ASR_DEBUG] 前置词映射大小: {len(augmenter.prev_to_abnormals)}")
-#     else:
-#         print("[ASR_DEBUG] augmenter 为 None，直接返回原句")
-#         return sentence
-
-#     augmenter = get_asr_augmenter()
-#     if augmenter is None:
-#         return sentence
-#     if not sentence or not sentence.strip():
-#         return sentence
-
-#     MAX_OPERATIONS = 2
-#     INSERT_PROB = 0.2
-#     ALPHA = 0.7
-#     RETRY_TIMES = 3
-
-#     def enhance_once(sent):
-#         words = _jieba.lcut(sent)
-#         if len(words) < 2:
-#             return sent
-
-#         candidate_indices = []
-#         for i in range(1, len(words)):
-#             if words[i-1] in augmenter.prev_to_abnormals:
-#                 candidate_indices.append(i)
-#         if not candidate_indices:
-#             return sent
-
-#         max_ops = min(MAX_OPERATIONS, len(candidate_indices))
-#         selected = []
-#         shuffled = _random.sample(candidate_indices, len(candidate_indices))
-#         for idx in shuffled:
-#             if not selected or all(abs(idx - x) >= 2 for x in selected):
-#                 selected.append(idx)
-#                 if len(selected) >= max_ops:
-#                     break
-
-#         operations = []
-#         for pos in selected:
-#             prev_word = words[pos-1]
-#             target_word = words[pos]
-#             candidates = augmenter.find_best_abnormals(
-#                 target_word,
-#                 prev_word=prev_word,
-#                 top_k=5,
-#                 alpha=ALPHA
-#             )
-#             if not candidates:
-#                 continue
-#             chosen = _random.choice(candidates)
-#             if _random.random() < INSERT_PROB:
-#                 operations.append((pos, chosen, True))
-#             else:
-#                 operations.append((pos, chosen, False))
-
-#         if not operations:
-#             return sent
-
-#         new_words = words[:]
-#         for pos, new_word, is_insert in sorted(operations, key=lambda x: x[0], reverse=True):
-#             if is_insert:
-#                 new_words.insert(pos, new_word)
-#             else:
-#                 new_words[pos] = new_word
-#         return ''.join(new_words)
-
-#     original = sentence
-#     for _ in range(RETRY_TIMES):
-#         result = enhance_once(original)
-#         if result != original:
-#             return result
-#     return original
-
 def apply_asr_noise(sentence: str) -> str:
     """
     对句子应用 ASR 噪声增强（多位置、替换/插入、前置词匹配）
@@ -460,13 +376,14 @@ def multi_step_augment(sentence: str, min_steps=1, max_steps=3, weights=None) ->
 
     # 构建 population 和对应的权重列表
     if weights is not None:
+        # 只保留权重 > 0 且存在于 AUGMENT_FUNC_MAP 中的操作
         valid_ops = [(name, w) for name, w in weights.items() if w > 0 and name in AUGMENT_FUNC_MAP]
-        if not valid_ops:
+        if not valid_ops:   # 如果所有权重都是 0 或无效，则回退到所有操作均匀分布
             population = list(AUGMENT_FUNC_MAP.values())
             weight_list = None
         else:
-            population = [AUGMENT_FUNC_MAP[name] for name, _ in valid_ops]
-            weight_list = [w for _, w in valid_ops]
+            population = [AUGMENT_FUNC_MAP[name] for name, _ in valid_ops]      # 函数对象列表
+            weight_list = [w for _, w in valid_ops]         # 对应的权重列表
     else:
         population = list(AUGMENT_FUNC_MAP.values())
         weight_list = None

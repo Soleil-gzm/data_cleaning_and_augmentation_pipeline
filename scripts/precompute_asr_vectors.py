@@ -14,7 +14,7 @@ from sentence_transformers import SentenceTransformer
 from pypinyin import pinyin, Style
 
 # ========== 硬编码模式配置（请修改为实际路径）==========
-HARDCODED_CSV_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/prev_clean_summary.csv"
+HARDCODED_CSV_PATH = "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/prev_clean_summary.csv"
 HARDCODED_OUTPUT_DIR = None  # 设为 None 表示使用 CSV 所在目录，或指定具体路径
 HARDCODED_MODEL_PATH = "Models/paraphrase-multilingual-MiniLM-L12-v2"
 # ==================================================

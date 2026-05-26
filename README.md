@@ -50,11 +50,11 @@
 | asr_noise_augmenter.py | ASR 噪声增强器类（新增）。加载预处理生成的 `.pkl` 文件（异常词向量、拼音、前置词映射），提供 `find_best_abnormals` 方法：基于拼音相似度（编辑距离）和语义相似度（余弦）加权混合，返回与目标词最匹配的异常词候选。 |
 | augment_utils_add.py | 增强函数库。包含所有基础增强函数（插入语气词、同音字替换、语序打乱、随机删除、同义词替换、词语重复等），以及 ASR 噪声增强函数  `apply_asr_noise`。提供 `multi_step_augment`（根据权重随机选择多个增强函数叠加）和 `augment_cell_multi`（处理带 `/` 分隔的多句子单元格）。 |
 | **pipeline :** |  |
-| 00_dataset_process.py | 解析原始对话文件（`.doc`/`.docx`）和案例提示文件（`.txt`），提取多轮对话并标注 `loss=True`，生成 `raw_dialogues.json`。 |
+| 00_dataset_process.py | 解析原始对话文件（`.doc`/`.docx`）和案例提示文件（`.txt`），提取多轮对话并标注 `loss="True"`，生成 `raw_dialogues.json`。 |
 | 01_split_dialogues.py | 将完整对话拆分为单轮样本（每条样本包含历史上下文），输出 JSONL 文件，并统计轮次分布。 |
 | 02_split_into_buckets.py | 根据样本的 `turn` 值分桶（支持自动百分位或手动指定），以便不同桶使用不同的清洗规则。 |
 | 03_clean_buckets_with_plots.py | 调用 Data‑Juicer 对每个桶进行清洗，生成清洗后样本、统计报告（含图表、保留率等）。 |
-| 04_apply_cleaned_loss_direct.py | 根据清洗结果（保留的 `(id, turn)`），在原 `raw_dialogues.json` 中设置对应 assistant 消息的 `loss=True`，其余为 `False`，输出 `training_data.json`。 |
+| 04_apply_cleaned_loss_direct.py | 根据清洗结果（保留的 `(id, turn)`），在原 `raw_dialogues.json` 中设置对应 assistant 消息的 `loss="True“`，其余为 `“False”`，输出 `training_data.json`。 |
 | 05_main_augment_add.py | 语义增强主脚本（增强核心）。读取最终训练数据，对每个对话中的 `user` 消息（可配置）进行多步叠加增强。支持通过 `augment_weights` 控制每种增强操作的相对概率。集成了 ASR 噪声增强器，并输出原始+变体、仅变体两种格式。 |
 | 06_replace_text.py | 紧急任务，修改prompt和对话实体 |
 | precompute_asr_vectors.py | ASR 词表预处理脚本（新增）。读取清洗后的 `prev_clean_summary.csv`，按空格拆分异常词，使用 `sentence-transformers` 计算语义向量，同时用 `pypinyin` 计算拼音串。输出三个 `.pkl` 文件：`abnormal_vectors.pkl`（词→向量）、`abnormal_pinyin.pkl`（词→拼音）、`prev_to_abnormals.pkl`（前置词→异常词列表）。 |

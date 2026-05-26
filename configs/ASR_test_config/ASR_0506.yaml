@@ -102,13 +102,15 @@ steps:
     max_turns: 2                       # 每个变体最多增强轮次数
     target_roles: ["user"]             # 需要修改：要增强的角色（可选 "user" 或 "assistant"）
     only_loss_true: false              # 是否只增强 loss=True 的消息（仅对 assistant 有意义）
-    adaptive_variants: false           # 是否根据可增强轮次自动调整变体数量
+    # adaptive_variants : 对话级变体数：控制数据集的整体多样性。对话越长、可修改位置越多，生成更多变体对话能更充分地探索不同的修改组合。
+    adaptive_variants: true           # 是否根据可增强轮次自动调整变体数量，只影响对话副本的数量，与消息内部的变体数无关。
     seed: 42                           # 随机种子
     # tag: "default"                     # 增强任务标签
     tag: "asr_noise"
     input_file: null                   # 输入 JSON 路径（若不使用 source_run_id）
     output_dir: null                   # 增强输出目录（默认 {final_output_dir}/{timestamp}_augment_{tag}）
- 
+    message_augment_prob: 0.7          # 新增：每条消息被增强的概率（默认1.0表示全部增强）
+
    # ASR 噪声增强的缓存文件路径（相对于任务目录或绝对路径）t:
     asr_cache:
       vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_3_no_prob/abnormal_vectors.pkl"
