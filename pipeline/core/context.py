@@ -84,17 +84,23 @@ class PipelineContext:
             flag_path.unlink()
 
     def resolve_path(self, path_str: str) -> Path:
-        """将配置中的路径字符串解析为 Path 对象"""
-        if not path_str:
-            return None
+        """
+        解析路径：
+        - 若以 '/' 开头或包含驱动器（Windows），视为绝对路径，直接返回。
+        - 若包含 '{task_dir}' 占位符，替换为 task_dir 并返回。
+        - 否则，视为相对于项目根目录（即 intermediate_root 的父目录）。
+        """
         p = Path(path_str)
         if p.is_absolute():
             return p
-        # 如果以 "." 开头，视为相对于当前工作目录
-        if str(p).startswith("."):
-            return p.resolve()
-        # 否则视为相对于 task_dir
-        return self.task_dir / p
+        # 检查是否包含 {task_dir} 占位符（保留原始字符串判断）
+        if "{task_dir}" in path_str:
+            # 直接替换占位符
+            resolved = path_str.format(task_dir=str(self.task_dir))
+            return Path(resolved)
+        # 否则视为相对于项目根目录（intermediate 的父目录）
+        project_root = self.intermediate_root.parent
+        return project_root / p
 
     def get_step_output_dir(self, step_name: str, default_subdir: str = None) -> Path:
         step_cfg = self.get_step_config(step_name)

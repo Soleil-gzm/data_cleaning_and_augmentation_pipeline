@@ -87,7 +87,12 @@ class FinalizeStep(PipelineStep):
     def _get_latest_clean_dir(self, cleaned_root: Path):
         if not cleaned_root.exists():
             return None
-        dirs = [d for d in cleaned_root.iterdir() if d.is_dir() and "_clean_" in d.name]
+        # 匹配包含 "_clean_" 或以 "_clean" 结尾的目录
+        dirs = [
+            d
+            for d in cleaned_root.iterdir()
+            if d.is_dir() and ("_clean_" in d.name or d.name.endswith("_clean"))
+        ]
         if not dirs:
             return None
         dirs.sort(reverse=True)

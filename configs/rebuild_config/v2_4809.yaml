@@ -60,7 +60,7 @@ steps:
   # ================================================================
   01_split:
     enabled: true
-    input_json: "{task_dir}/raw_dialogues.json"   # 若禁用00，改为实际路径，如 "./data/raw_dialogues.json"
+    input_json: "datas/raw_data/data-simulation-4809-modify.json"   # 若禁用00，改为实际路径，如 "./data/raw_dialogues.json"
     output_dir: "{task_dir}/samples"
     stats_dir: "{task_dir}/stats"
     batch_size: 120000
@@ -109,7 +109,7 @@ steps:
   # ================================================================
   04_finalize:
     enabled: false
-    original_json: "{task_dir}/raw_dialogues.json"
+    original_json: "datas/raw_data/data-simulation-4809-modify.json"
     cleaned_root: "{task_dir}/cleaned_jsonl"
     output_root: "{task_dir}/final_training_data"
     # source_run_id: 可指定具体清洗 run_id，留空则自动取最新
