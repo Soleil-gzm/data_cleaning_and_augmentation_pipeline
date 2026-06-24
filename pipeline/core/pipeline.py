@@ -1,6 +1,7 @@
 """
 流水线调度器
 """
+
 import sys
 from pathlib import Path
 from typing import Optional
@@ -12,7 +13,9 @@ from ..utils.logger import setup_task_logger
 
 
 class Pipeline:
-    def __init__(self, config_path: Optional[Path] = None, config_dict: Optional[dict] = None):
+    def __init__(
+        self, config_path: Optional[Path] = None, config_dict: Optional[dict] = None
+    ):
         if config_path is not None and config_dict is not None:
             raise ValueError("只能指定 config_path 或 config_dict 之一")
         if config_path is not None:
@@ -32,7 +35,7 @@ class Pipeline:
             task_name,
             task_dir / "logs",
             console_level=log_cfg.get("level", "INFO"),
-            file_level=log_cfg.get("file_level", "DEBUG")
+            file_level=log_cfg.get("file_level", "DEBUG"),
         )
         self.context.set_logger(logger)
         self.logger = logger
@@ -43,8 +46,18 @@ class Pipeline:
         # 步骤顺序
         self.steps_order = self.config.get("steps_order", [])
         if not self.steps_order:
-            default_order = ["00_generate_raw", "01_split", "02_bucket", "03_clean", "04_finalize", "05_augment", "06_replace_text"]
-            self.steps_order = [s for s in default_order if s in self.config.get("steps", {})]
+            default_order = [
+                "00_generate_raw",
+                "01_split",
+                "02_bucket",
+                "03_clean",
+                "04_finalize",
+                "05_augment",
+                "06_replace_text",
+            ]
+            self.steps_order = [
+                s for s in default_order if s in self.config.get("steps", {})
+            ]
 
         # 执行器
         executor_type = self.config.get("executor", {}).get("type", "sequential")

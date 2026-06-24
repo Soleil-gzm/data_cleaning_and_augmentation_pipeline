@@ -1,10 +1,16 @@
+"""
+JSON 报告器
+"""
+
 import json
 from pathlib import Path
+from typing import Dict, Any
+
 from .base import BaseReporter
 
 
 class JsonReporter(BaseReporter):
-    def report(self, analysis_data: Dict, output_dir: Path, step_name: str):
+    def report(self, analysis_data: Dict[str, Any], output_dir: Path, step_name: str):
         output_dir.mkdir(parents=True, exist_ok=True)
         file_path = output_dir / f"{step_name}_analysis.json"
         with open(file_path, "w", encoding="utf-8") as f:

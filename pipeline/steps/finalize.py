@@ -1,6 +1,7 @@
 """
 04_finalize：应用清洗结果，标记 loss
 """
+
 import json
 from pathlib import Path
 from collections import defaultdict
@@ -12,20 +13,21 @@ from ..core.step import PipelineStep
 class FinalizeStep(PipelineStep):
     def run(self) -> bool:
         cfg = self.context.get_step_config("04_finalize")
-        original_json = cfg.get("original_json") or (self.context.task_dir / "raw_dialogues.json")
-        cleaned_root = cfg.get("cleaned_root") or (self.context.task_dir / "cleaned_jsonl")
-        output_root = cfg.get("output_root") or (self.context.task_dir / "final_training_data")
-        source_run_id = cfg.get("source_run_id")  # 可选
-
-        original_json = Path(original_json)
-        cleaned_root = Path(cleaned_root)
-        output_root = Path(output_root)
+        original_json = self.context.resolve_path(
+            cfg.get("original_json", "{task_dir}/raw_dialogues.json")
+        )
+        cleaned_root = self.context.resolve_path(
+            cfg.get("cleaned_root", "{task_dir}/cleaned_jsonl")
+        )
+        output_root = self.context.resolve_path(
+            cfg.get("output_root", "{task_dir}/final_training_data")
+        )
+        source_run_id = cfg.get("source_run_id")
 
         if not original_json.exists():
             self.logger.error(f"原始对话不存在: {original_json}")
             return False
 
-        # 确定清洗结果目录
         if source_run_id:
             cleaned_dir = cleaned_root / source_run_id
         else:
@@ -38,20 +40,16 @@ class FinalizeStep(PipelineStep):
         run_id = cleaned_dir.name
         self.logger.info(f"使用清洗结果: {run_id}")
 
-        # 加载原始数据
         with open(original_json, "r", encoding="utf-8") as f:
             dialogues = json.load(f)
         self.logger.info(f"原始对话数: {len(dialogues)}")
 
-        # 收集保留的 turns
         kept_turns = self._collect_kept_turns(cleaned_dir)
         total_kept = sum(len(v) for v in kept_turns.values())
         self.logger.info(f"保留轮次数: {total_kept}")
 
-        # 应用 loss
         final_data = self._apply_loss(dialogues, kept_turns)
 
-        # 保存
         output_dir = output_root / f"{run_id}_final"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / "cleaned_training_data.json"
@@ -59,16 +57,25 @@ class FinalizeStep(PipelineStep):
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(final_data, f, ensure_ascii=False, indent=2)
 
-        # 元数据
         metadata = {
             "run_id": f"{run_id}_final",
             "source_run_id": run_id,
             "timestamp": datetime.now().isoformat(),
             "statistics": {
                 "total_dialogues": len(final_data),
-                "total_assistant": sum(1 for d in final_data for m in d["messages"] if m.get("role") == "assistant"),
-                "total_loss_true": sum(1 for d in final_data for m in d["messages"] if m.get("role") == "assistant" and m.get("loss") == "True"),
-            }
+                "total_assistant": sum(
+                    1
+                    for d in final_data
+                    for m in d["messages"]
+                    if m.get("role") == "assistant"
+                ),
+                "total_loss_true": sum(
+                    1
+                    for d in final_data
+                    for m in d["messages"]
+                    if m.get("role") == "assistant" and m.get("loss") == "True"
+                ),
+            },
         }
         with open(output_dir / "run_metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)

@@ -1,6 +1,7 @@
 """
 统一日志配置
 """
+
 import logging
 from pathlib import Path
 from typing import Union
@@ -34,7 +35,9 @@ def setup_task_logger(
     ch = logging.StreamHandler()
     ch.setLevel(getattr(logging, console_level.upper(), logging.INFO))
 
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
 

@@ -1,6 +1,7 @@
 """
 01_split：多轮对话拆分为样本，带进度条
 """
+
 import json
 from pathlib import Path
 from collections import defaultdict
@@ -12,26 +13,26 @@ from ..utils.progress import get_progress_bar
 class SplitDialoguesStep(PipelineStep):
     def run(self) -> bool:
         cfg = self.context.get_step_config("01_split")
-        input_json = cfg.get("input_json") or (self.context.task_dir / "raw_dialogues.json")
-        output_dir = cfg.get("output_dir") or (self.context.task_dir / "samples")
-        stats_dir = cfg.get("stats_dir") or (self.context.task_dir / "stats")
+        input_json = self.context.resolve_path(
+            cfg.get("input_json", "{task_dir}/raw_dialogues.json")
+        )
+        output_dir = self.context.resolve_path(
+            cfg.get("output_dir", "{task_dir}/samples")
+        )
+        stats_dir = self.context.resolve_path(cfg.get("stats_dir", "{task_dir}/stats"))
         batch_size = cfg.get("batch_size", 120000)
 
-        input_path = Path(input_json)
-        if not input_path.exists():
-            self.logger.error(f"输入文件不存在: {input_path}")
+        if not input_json.exists():
+            self.logger.error(f"输入文件不存在: {input_json}")
             return False
 
-        output_dir = Path(output_dir)
-        stats_dir = Path(stats_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         stats_dir.mkdir(parents=True, exist_ok=True)
 
-        self.logger.info(f"输入: {input_path}")
+        self.logger.info(f"输入: {input_json}")
         self.logger.info(f"输出目录: {output_dir}")
 
-        # 加载原始数据
-        with open(input_path, "r", encoding="utf-8") as f:
+        with open(input_json, "r", encoding="utf-8") as f:
             dialogues = json.load(f)
 
         total = len(dialogues)
@@ -43,7 +44,6 @@ class SplitDialoguesStep(PipelineStep):
         current_file_path = None
         file_count = 0
 
-        # 进度条
         pbar = get_progress_bar(range(total), desc="拆分对话", unit="dialog", show=True)
 
         for dialog_idx in pbar:
@@ -54,7 +54,6 @@ class SplitDialoguesStep(PipelineStep):
 
             samples = self._process_dialog(dialog_idx, messages, turn_counter)
 
-            # 写入批次文件
             if current_file is None or file_count >= batch_size:
                 if current_file:
                     current_file.close()
@@ -73,7 +72,6 @@ class SplitDialoguesStep(PipelineStep):
         if current_file:
             current_file.close()
 
-        # 保存统计
         stats = {
             "total_samples": sum(turn_counter.values()),
             "turn_distribution": dict(turn_counter),
@@ -89,7 +87,6 @@ class SplitDialoguesStep(PipelineStep):
         return True
 
     def _process_dialog(self, dialog_id: int, messages: list, turn_counter: dict):
-        """处理单个对话，返回样本列表"""
         samples = []
         history_pairs = []
         pending_user = None

@@ -1,6 +1,7 @@
 """
-进度条工具：支持 tqdm，若无则降级为简单迭代
+进度条工具：基于 tqdm，支持全局开关
 """
+
 import sys
 from typing import Iterable, Optional, Any, Callable
 from tqdm import tqdm as _tqdm
@@ -31,19 +32,12 @@ def get_progress_bar(
     if not show:
         return iterable
 
-    return _tqdm(
-        iterable,
-        desc=desc,
-        unit=unit,
-        total=total,
-        file=sys.stdout,
-        **kwargs
-    )
+    return _tqdm(iterable, desc=desc, unit=unit, total=total, file=sys.stdout, **kwargs)
 
 
 def progress_wrapper(func: Callable, desc: str, show: Optional[bool] = None):
     """
-    装饰器：为函数调用显示单次进度（例如长时间运行的函数）
+    装饰器/包装器：为函数调用显示单次进度（适用于长时间运行的单任务）
     """
     if show is None:
         show = _SHOW_PROGRESS
@@ -51,7 +45,6 @@ def progress_wrapper(func: Callable, desc: str, show: Optional[bool] = None):
     if not show:
         return func()
 
-    # 简单的脉冲进度条
     with _tqdm(total=1, desc=desc, unit="task", file=sys.stdout) as pbar:
         result = func()
         pbar.update(1)

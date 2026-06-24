@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 class BaseReporter(ABC):
     """报告器基类"""
+
     def __init__(self, config: Dict[str, Any], context):
         self.config = config
         self.context = context

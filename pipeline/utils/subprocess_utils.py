@@ -1,6 +1,7 @@
 """
 子进程执行工具
 """
+
 import subprocess
 import logging
 from typing import List, Union, Optional
@@ -36,6 +37,6 @@ def run_subprocess(
             if result.stderr:
                 logger.error(f"STDERR: {result.stderr[:1000]}")
         else:
-            logger.debug(f"命令执行成功")
+            logger.debug("命令执行成功")
 
     return result

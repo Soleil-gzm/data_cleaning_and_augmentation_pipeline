@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 class BaseAnalyzer(ABC):
     """分析器基类"""
+
     def __init__(self, context):
         self.context = context
         self.logger = context.logger

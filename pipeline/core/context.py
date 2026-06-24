@@ -1,6 +1,7 @@
 """
 流水线上下文：管理配置、路径、日志、断点、IO审计
 """
+
 import json
 import time
 from pathlib import Path
@@ -15,7 +16,9 @@ class PipelineContext:
     def __init__(self, config: Dict[str, Any]):
         self._config = config
         self._task_name = config.get("task_name", "default_task")
-        self._intermediate_root = Path(config.get("paths", {}).get("intermediate", "./intermediate"))
+        self._intermediate_root = Path(
+            config.get("paths", {}).get("intermediate", "./intermediate")
+        )
         self._output_root = Path(config.get("paths", {}).get("output", "./output"))
         self._task_dir = self._intermediate_root / self._task_name
         self._resume = config.get("resume", False)
@@ -81,9 +84,16 @@ class PipelineContext:
             flag_path.unlink()
 
     def resolve_path(self, path_str: str) -> Path:
+        """将配置中的路径字符串解析为 Path 对象"""
+        if not path_str:
+            return None
         p = Path(path_str)
         if p.is_absolute():
             return p
+        # 如果以 "." 开头，视为相对于当前工作目录
+        if str(p).startswith("."):
+            return p.resolve()
+        # 否则视为相对于 task_dir
         return self.task_dir / p
 
     def get_step_output_dir(self, step_name: str, default_subdir: str = None) -> Path:
@@ -96,7 +106,9 @@ class PipelineContext:
         return self.task_dir / step_name
 
     # ===== IO 审计 =====
-    def log_io_summary(self, step_name: str, input_paths: List[Path], output_paths: List[Path]):
+    def log_io_summary(
+        self, step_name: str, input_paths: List[Path], output_paths: List[Path]
+    ):
         """记录输入输出转化统计"""
         if not self.logger:
             return
@@ -118,19 +130,25 @@ class PipelineContext:
                 total_out_size += stats["size_mb"]
 
         self.logger.info(f"[{step_name}] IO 转化完成:")
-        self.logger.info(f"  输入: {len(input_paths)} 个路径, 总计 {total_in_lines} 行, {total_in_size:.2f} MB")
-        self.logger.info(f"  输出: {len(output_paths)} 个路径, 总计 {total_out_lines} 行, {total_out_size:.2f} MB")
+        self.logger.info(
+            f"  输入: {len(input_paths)} 个路径, 总计 {total_in_lines} 行, {total_in_size:.2f} MB"
+        )
+        self.logger.info(
+            f"  输出: {len(output_paths)} 个路径, 总计 {total_out_lines} 行, {total_out_size:.2f} MB"
+        )
         if total_in_lines > 0:
             ratio = total_out_lines / total_in_lines
             self.logger.info(f"  转化率: {ratio:.2f}x")
 
-        self._step_io_history.append({
-            "step": step_name,
-            "input_lines": total_in_lines,
-            "output_lines": total_out_lines,
-            "input_size_mb": total_in_size,
-            "output_size_mb": total_out_size,
-        })
+        self._step_io_history.append(
+            {
+                "step": step_name,
+                "input_lines": total_in_lines,
+                "output_lines": total_out_lines,
+                "input_size_mb": total_in_size,
+                "output_size_mb": total_out_size,
+            }
+        )
 
     def print_task_tree(self):
         """打印任务目录树"""
@@ -138,4 +156,8 @@ class PipelineContext:
             return
         if self.logger:
             self.logger.info(f"任务目录结构 ({self.task_dir}):")
-        print_directory_tree(self.task_dir, max_depth=4, exclude_patterns=[".step_*", "__pycache__", "*.pyc", ".DS_Store", "*.log"])
+        print_directory_tree(
+            self.task_dir,
+            max_depth=4,
+            exclude_patterns=[".step_*", "__pycache__", "*.pyc", ".DS_Store", "*.log"],
+        )

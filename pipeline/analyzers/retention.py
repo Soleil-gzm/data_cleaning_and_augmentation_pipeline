@@ -1,6 +1,7 @@
 """
 保留率分析器
 """
+
 from .base import BaseAnalyzer
 
 
@@ -10,7 +11,7 @@ class RetentionAnalyzer(BaseAnalyzer):
             "total_input": raw_metrics.get("total_input", 0),
             "total_output": raw_metrics.get("total_output", 0),
             "overall_retention_rate": 0.0,
-            "buckets": {}
+            "buckets": {},
         }
         total_in = result["total_input"]
         total_out = result["total_output"]
@@ -23,7 +24,7 @@ class RetentionAnalyzer(BaseAnalyzer):
             result["buckets"][bucket_name] = {
                 "input": inp,
                 "output": out,
-                "retention_rate": out / inp if inp > 0 else 0
+                "retention_rate": out / inp if inp > 0 else 0,
             }
 
         return result

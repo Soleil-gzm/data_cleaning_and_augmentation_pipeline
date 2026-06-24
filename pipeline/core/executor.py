@@ -1,6 +1,7 @@
 """
 执行器基类：预留并行扩展接口
 """
+
 from abc import ABC, abstractmethod
 from typing import List, Callable, Any
 from .context import PipelineContext

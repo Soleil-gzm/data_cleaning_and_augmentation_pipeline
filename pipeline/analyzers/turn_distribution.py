@@ -1,6 +1,7 @@
 """
 轮次分布分析器
 """
+
 from .base import BaseAnalyzer
 
 
@@ -13,8 +14,8 @@ class TurnDistributionAnalyzer(BaseAnalyzer):
             },
             "turn_retention": self._compute_turn_retention(
                 raw_metrics.get("input_turn_dist", {}),
-                raw_metrics.get("output_turn_dist", {})
-            )
+                raw_metrics.get("output_turn_dist", {}),
+            ),
         }
 
     def _compute_turn_retention(self, input_dist: dict, output_dist: dict) -> dict:
@@ -26,6 +27,6 @@ class TurnDistributionAnalyzer(BaseAnalyzer):
             result[str(turn)] = {
                 "input": inp,
                 "output": out,
-                "retention": out / inp if inp > 0 else 0
+                "retention": out / inp if inp > 0 else 0,
             }
         return result
