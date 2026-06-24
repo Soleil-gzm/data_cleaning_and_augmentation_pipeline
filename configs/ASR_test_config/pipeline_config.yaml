@@ -4,8 +4,8 @@
 # ============================================================
 
 # ------------------- 基础任务信息 -------------------
-task_name: "task_null"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
-resume: true                      # 是否启用断点续跑（true=跳过已完成步骤）
+task_name: "ASR_4809_asr"          # 需要修改：任务名称（将作为中间目录名，如 intermediate/my_task_001/）
+resume: false                      # 是否启用断点续跑（true=跳过已完成步骤）
 
 # ------------------- 原始数据路径 -------------------
 paths:
@@ -14,7 +14,7 @@ paths:
     prompt_dir: "./datas/cases_random"                    # 需要修改：存放 case_*.txt 提示文件的目录
   output:
     base_dir: "./intermediate"                           # 所有中间输出的根目录（会自动追加 task_name）
-    final_output_dir: "./output_augmented_data"          # 增强最终数据的输出目录
+    final_output_dir: "./output_augmented_data/{task_name}"          # 增强最终数据的输出目录
 
 # ------------------- 各步骤配置（通常只需修改路径和策略） -------------------
 steps:
@@ -29,19 +29,19 @@ steps:
 
   # ----- 步骤01：拆分为单轮样本 -----
   01_split:
-    enabled: true
+    enabled: false
     script: "scripts/01_split_dialogues.py"
     batch_size: 120000               # 每个 JSONL 文件包含的最大对话数
     # 以下参数可选
     # input_json: null                 # 可选，覆盖 raw_dialogues.json 路径
     # 这里使用已有的数据，还需要修改04脚本的original_json路径保持一致
-    input_json: ./datas/raw_data/data-simulation-4809-modify.json                 # null可选，覆盖 raw_dialogues.json 路径
+    input_json: ./datas/raw_data/data-simulation-4809-modify.json              # null可选，覆盖 raw_dialogues.json 路径
     output_dir: null                 # 可选，样本输出目录（默认 {base_dir}/{task_name}/samples）
     stats_dir: null                  # 可选，轮次统计输出目录（默认 {base_dir}/{task_name}/stats）
 
   # ----- 步骤02：按轮次分桶 -----
   02_bucket:
-    enabled: true
+    enabled: false
     script: "scripts/02_split_into_buckets.py"
     # 分桶策略：auto（自动，推荐）、percentile、equal_count、manual
     strategy: "manual"                 # 需要修改（通常用 auto）
@@ -54,13 +54,13 @@ steps:
     # 手动桶边界（仅当 strategy=manual 时使用）
     # 例如: [[0,0], [1,2], [3,5], [6,10], [11,20], [21,999]]
     # 以下参数可选
-    manual_buckets: [[0,0],[1,1],[2,2],[3,3],[4,4],[5,5],[6,6],[7,7],[8,8],[9,9],[10,21]]              
+    manual_buckets:  [[0,0],[1,1],[2,2],[3,3],[4,4],[5,5],[6,6],[7,7],[8,8],[9,9],[10,21]]              
     samples_dir: null                # 可选，覆盖样本目录
     output_base: null                # 可选，桶输出根目录（默认 {base_dir}/{task_name}/bucketed）
 
   # ----- 步骤03：调用 Data-Juicer 清洗每个桶 -----
   03_clean:
-    enabled: true
+    enabled: false
     script: "scripts/03_clean_buckets_with_plots.py"
     configs_dir: "configs/configs_qa"    # 需要修改：存放清洗配置文件（YAML）的目录
     tag: "default"                       # 需要修改：清洗任务标签（用于输出子目录命名）
@@ -84,44 +84,55 @@ steps:
 
   # ----- 步骤04：应用清洗结果，生成最终训练数据 -----
   04_finalize:
-    enabled: true
+    enabled: false
     script: "scripts/04_apply_cleaned_loss_direct.py"
     source_run_id: null                # 可选，指定清洗步骤的 run_id（如 "20250430_143022_clean_default"），不填则自动取最新
     # 以下参数可选
-    original_json: ./datas/raw_data/data-simulation-4809-modify.json                # 原始 JSON 路径（默认 {base_dir}/{task_name}/raw_dialogues.json）
+    original_json: ./datas/raw_data/data-simulation-4809-modify.json            # 原始 JSON 路径（默认 {base_dir}/{task_name}/raw_dialogues.json）
     cleaned_root: null                 # 清洗结果根目录（默认 {base_dir}/{task_name}/cleaned_jsonl）
     output_root: null                  # 最终训练数据输出根目录（默认 {base_dir}/{task_name}/final_training_data）
 
   # ----- 步骤05：语义增强（可选）-----
   05_augment:
-    enabled: true                     # 需要修改：是否启用增强（默认关闭，需要时改为 true）
+    enabled: True                     # 需要修改：是否启用增强（默认关闭，需要时改为 true）
     script: "scripts/05_main_augment_add.py"
     source_run_id: null                # 可选，指定最终数据的 run_id（如 "20250430_143022_clean_default_final"），不填则自动取最新
-    num_variants: 3                    # 每个原始对话生成多少个变体
+    num_variants: 1                   # 每个原始对话生成多少个变体
     min_turns: 1                       # 每个变体最少增强轮次数
     max_turns: 2                       # 每个变体最多增强轮次数
     target_roles: ["user"]             # 需要修改：要增强的角色（可选 "user" 或 "assistant"）
     only_loss_true: false              # 是否只增强 loss=True 的消息（仅对 assistant 有意义）
-    adaptive_variants: false           # 是否根据可增强轮次自动调整变体数量
+    # adaptive_variants : 对话级变体数：控制数据集的整体多样性。对话越长、可修改位置越多，生成更多变体对话能更充分地探索不同的修改组合。
+    adaptive_variants: True           # 是否根据可增强轮次自动调整变体数量，只影响对话副本的数量，与消息内部的变体数无关。
     seed: 42                           # 随机种子
     # tag: "default"                     # 增强任务标签
-    message_augment_prob: 0.7          # 新增：每条消息被增强的概率（默认1.0表示全部增强）
     tag: "asr_noise"
     input_file: null                   # 输入 JSON 路径（若不使用 source_run_id）
     output_dir: null                   # 增强输出目录（默认 {final_output_dir}/{timestamp}_augment_{tag}）
+    message_augment_prob: 0.7          # 新增：每条消息被增强的概率（默认1.0表示全部增强）
+
+   # ASR 噪声增强的缓存文件路径（相对于任务目录或绝对路径）t:
+    asr_cache:
+      vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_vectors.pkl"
+      pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_pinyin.pkl"
+      prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/prev_to_abnormals.pkl"
+      model_path: "Models/paraphrase-multilingual-MiniLM-L12-v2"   # 实际路径
  # ----- 新增：增强操作权重配置 -----
  # 直接用整数相对大小表达设计意图（“我要让语序打乱出现次数是结巴模拟的 3 倍”）。
     augment_weights:
-      insert_filler: 2.0      # 插入语气词，权重较高
-      stutter: 1.0            # 结巴模拟
-      reorder: 3.0            # 语序打乱，提高出现概率
-      homophone: 1.5          # 同音字替换
-      random_delete: 0.5      # 随机删除，降低概率
-      random_entity_replace: 1.0
-      similarword: 2.0
-      word_repetition: 1.0
+      insert_filler: 1      # 插入语气词，权重较高
+      stutter: 1            # 结巴模拟
+      reorder: 1            # 语序打乱，提高出现概率
+      homophone: 0         # 同音字替换
+      random_delete: 1      # 随机删除，降低概率
+      random_entity_replace: 1
+      similarword: 0
+      word_repetition: 2
+      asr_noise: 5.0          # 让 ASR 噪声出现概率较高
     # 注意：apply_reorder 重复多次的做法已不需要，直接通过权重控制
     # 如果某操作权重为 0 或不列出，则该操作不会被选中。
+
+
 
 # ------------------- 日志配置 -------------------
 logging:
