@@ -1,0 +1,85 @@
+task_name: "collection_demo"
+resume: true
+
+executor:
+  type: sequential
+  max_workers: 4
+
+paths:
+  input:
+    raw_dialogues_dir: "./data/Yangqg_simulation_data"
+    prompt_dir: "./data/cases_random"
+  intermediate: "./intermediate"
+  output: "./output"
+
+logging:
+  level: INFO
+  file_level: DEBUG
+  show_progress: true
+  print_tree: true
+
+reporting:
+  enabled: true
+  reporters:
+    - type: json
+      output_dir: "{task_dir}/reports/"
+    - type: csv
+      output_dir: "{task_dir}/reports/"
+    - type: matplotlib
+      output_dir: "{task_dir}/reports/plots/"
+      dpi: 150
+
+steps_order:
+  - "00_generate_raw"
+  - "01_split"
+  - "02_bucket"
+  - "03_clean"
+  - "04_finalize"
+  - "05_augment"
+  - "06_replace_text"
+
+steps:
+  00_generate_raw:
+    enabled: true
+
+  01_split:
+    enabled: true
+    batch_size: 120000
+
+  02_bucket:
+    enabled: true
+    strategy: percentile
+    auto_params:
+      percentiles: [0, 25, 50, 75, 90, 95, 100]
+
+  03_clean:
+    enabled: true
+    configs_dir: "configs/configs_qa"
+    bucket_config_map:
+      - pattern: "bucket_.*"
+        config: "config_light.yaml"
+    attach_analyzers:
+      - "RetentionAnalyzer"
+      - "TurnDistributionAnalyzer"
+
+  04_finalize:
+    enabled: true
+
+  05_augment:
+    enabled: true
+    num_variants: 3
+    target_roles: ["user"]
+    only_loss_true: true
+    adaptive_variants: false
+    message_augment_prob: 0.8
+    augment_weights:
+      synonym_replace: 1.0
+      asr_noise: 0.5
+    asr_cache:
+      vectors_path: "cache/vectors.pkl"
+      pinyin_path: "cache/pinyin.pkl"
+      model_path: "models/asr_model"
+
+  06_replace_text:
+    enabled: true
+    suffix: "_replaced"
