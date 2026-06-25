@@ -7,13 +7,13 @@
 # ===================================================================
 
 # ------------------- 基础任务信息 -------------------
-task_name: "General_10w_aug"          # 任务名称，会作为 intermediate 下的子目录名
+task_name: "General_1w_aug"          # 任务名称，会作为 intermediate 下的子目录名
 resume: false                             # 断点续跑（true=跳过已完成步骤）
 
 # ------------------- 执行器配置（预留并行） -------------------
 executor:
   # type: parallel                        # 可选：sequential 或 parallel
-  max_workers: 4                          # 全局默认并行数（仅在 type=parallel 时生效）
+  max_workers: 1                        # 全局默认并行数（仅在 type=parallel 时生效）
 
 # ------------------- 路径管理 -------------------
 paths:
@@ -74,7 +74,7 @@ steps:
   01_split:
     enabled: false
     # 输入文件：相对于项目根目录的路径（或绝对路径）
-    input_json: "datas/raw_data/general_dialogues_20260624_111758.json"
+    input_json: "datas/raw_data/general_dialogues_20260624_100317.json"
     # 输出目录（默认 {task_dir}/samples）
     output_dir: "{task_dir}/samples"
     stats_dir: "{task_dir}/stats"
@@ -113,7 +113,7 @@ steps:
       - [19, 19]
       - [20, 20]
       - [21, 21]
-      - [22, 57]      # 长对话桶
+      - [22, 56]      # 长对话桶
     # ----- 自动模式示例（注释掉 manual_buckets，取消下面注释）-----
     # auto_params:
     #   percentiles: [0, 25, 50, 75, 90, 95, 100]   # percentile 策略参数
@@ -134,7 +134,7 @@ steps:
     tag: "default"                           # 清洗任务标签（用于子目录命名）
     # 桶名到配置文件的映射（正则匹配）
     bucket_config_map:
-      - pattern: "bucket_22_57"              # 匹配长对话桶
+      - pattern: "bucket_22_56"              # 匹配长对话桶
         config: "config_bucket_10plus.yaml"
       - pattern: ".*"                        # 默认匹配所有未匹配的桶
         config: "overal_config.yaml"
@@ -149,7 +149,7 @@ steps:
   04_finalize:
     enabled: false                        # 暂不启用
     source_run_id: null           # 若为 null，自动查找最新的清洗 run_id
-    original_json: "datas/raw_data/general_dialogues_20260624_111758.json"   # 原始对话（与 01 输入一致）
+    original_json: "datas/raw_data/general_dialogues_20260624_100317.json"   # 原始对话（与 01 输入一致）
     cleaned_root: "{task_dir}/cleaned_jsonl" # 清洗结果根目录
     output_root: "{task_dir}/final_training_data"  # 最终训练数据输出根目录
     source_run_id: null                      # 可选，指定清洗 run_id（目录名），留空则自动取最新

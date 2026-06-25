@@ -1,5 +1,5 @@
 """
-03_clean 步骤：并行清洗（文件级），支持进度条连续更新,输出带 run_id 隔离
+03_clean 步骤：并行清洗（文件级），支持进度条连续更新，自动清理临时配置
 """
 
 import json
@@ -14,7 +14,6 @@ from datetime import datetime
 from tqdm import tqdm
 
 from ..core.step import PipelineStep
-from ..utils.file_utils import get_file_stats
 from ..analyzers.registry import AnalyzerRegistry
 from ..reporters.registry import ReporterRegistry
 
@@ -39,11 +38,9 @@ class CleanStep(PipelineStep):
         global_workers = self.context.config.get("executor", {}).get("max_workers", 1)
         max_workers = cfg.get("max_workers", global_workers)
         if max_workers <= 1:
-            self.logger.warning("max_workers <= 1，降级为串行模式（建议使用并行）")
-            # 可调用串行逻辑，但此处直接使用并行但 max_workers=1 也可以，但为了简单，我们复用并行逻辑并强制 max_workers=1
-            max_workers = 1
-
-        self.logger.info(f"清洗 run_id: {run_id}, 并行度: {max_workers}")
+            self.logger.info("清洗使用串行模式（max_workers=1）")
+        else:
+            self.logger.info(f"清洗使用并行模式，进程数: {max_workers}")
 
         # 检查分桶目录
         bucketed_root_path = Path(bucketed_root)
@@ -101,79 +98,23 @@ class CleanStep(PipelineStep):
 
         self.logger.info(f"共发现 {len(all_tasks)} 个文件待清洗")
 
-        # 并行执行
-        raw_metrics = {
-            "buckets": defaultdict(
-                lambda: {
-                    "input_samples": 0,
-                    "output_samples": 0,
-                    "input_turn_dist": defaultdict(int),
-                    "output_turn_dist": defaultdict(int),
-                }
-            ),
-            "total_input": 0,
-            "total_output": 0,
-            "input_turn_dist": defaultdict(int),
-            "output_turn_dist": defaultdict(int),
-        }
-        success_count = 0
-        total_tasks = len(all_tasks)
+        # 执行清洗（串行或并行）
+        raw_metrics, success_count, total_tasks = self._run_tasks(
+            all_tasks, max_workers
+        )
 
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
-            future_to_task = {
-                executor.submit(self._clean_file_worker, task): task
-                for task in all_tasks
-            }
+        if success_count == 0:
+            self.logger.error("所有文件清洗均失败")
+            return False
+        self.logger.info(f"清洗完成: {success_count}/{total_tasks} 个文件成功")
 
-            # 进度条（按文件更新）
-            with tqdm(total=total_tasks, desc="清洗文件", unit="file") as pbar:
-                for future in as_completed(future_to_task):
-                    task = future_to_task[future]
-                    try:
-                        result = future.result(timeout=300)  # 单个文件超时5分钟
-                        # 合并结果
-                        if result is not None:
-                            bucket_name, stats = result
-                            # 合并到 raw_metrics
-                            b_stats = raw_metrics["buckets"][bucket_name]
-                            b_stats["input_samples"] += stats["input_samples"]
-                            b_stats["output_samples"] += stats["output_samples"]
-                            for t, c in stats["input_turn_dist"].items():
-                                b_stats["input_turn_dist"][t] += c
-                                raw_metrics["input_turn_dist"][t] += c
-                            for t, c in stats["output_turn_dist"].items():
-                                b_stats["output_turn_dist"][t] += c
-                                raw_metrics["output_turn_dist"][t] += c
-                            raw_metrics["total_input"] += stats["input_samples"]
-                            raw_metrics["total_output"] += stats["output_samples"]
-                            success_count += 1
-                            pbar.set_postfix(
-                                {
-                                    "成功": success_count,
-                                    "失败": total_tasks - success_count,
-                                }
-                            )
-                    except Exception as e:
-                        self.logger.error(
-                            f"文件 {task['input_file'].name} 清洗异常: {e}"
-                        )
-                        # 仍更新进度条
-                    pbar.update(1)  # 无论成功与否，进度条前进1
-
-        # 转换 defaultdict 为普通 dict
+        # 转换 defaultdict
         for bucket, stats in raw_metrics["buckets"].items():
             stats["input_turn_dist"] = dict(stats["input_turn_dist"])
             stats["output_turn_dist"] = dict(stats["output_turn_dist"])
         raw_metrics["input_turn_dist"] = dict(raw_metrics["input_turn_dist"])
         raw_metrics["output_turn_dist"] = dict(raw_metrics["output_turn_dist"])
         raw_metrics["buckets"] = dict(raw_metrics["buckets"])
-
-        # 判断是否整体成功
-        if success_count == 0:
-            self.logger.error("所有文件清洗均失败")
-            return False
-        self.logger.info(f"清洗完成: {success_count}/{total_tasks} 个文件成功")
 
         # 保存原始指标
         report_base = self.context.task_dir / "reports" / run_id
@@ -217,27 +158,77 @@ class CleanStep(PipelineStep):
 
         return True
 
-    # ================== 串行模式（兼容旧逻辑） ==================
-    def _run_serial(
-        self, bucketed_root, cleaned_root, trace_root, configs_dir, bucket_config_map
-    ):
-        """原有的串行逻辑（保持兼容，但不推荐使用）"""
-        self.logger.info("串行模式运行清洗（max_workers=1）")
-        # 此处可以复制原有串行代码，但为了简洁，我们复用并行框架但 max_workers=1 时直接使用单进程
-        # 实际上可以调用并行版本但 max_workers=1，但为了清晰，我们保留原逻辑（省略，可调用并行版本）
-        # 为节省篇幅，这里直接用并行版本（max_workers=1 时 ProcessPoolExecutor 也有效，但为保持一致性）
-        # 但为了确保不引入额外进程，我们可以直接在当前进程执行所有任务
-        # 这里我们简化为调用并行逻辑但强制 max_workers=1
-        # 实际上我们可以将本方法直接调用并行逻辑，但需要传递 max_workers=1
-        # 为减少重复，我们直接调用并行逻辑（但需重写部分），这里我选择保留原实现，但考虑到篇幅，建议直接复用上面的并行逻辑并设置 max_workers=1
-        # 但由于代码冗余，我们在本版本中不再重复写串行，因为串行模式将在 max_workers=1 时由并行逻辑自动处理
-        # 但为了兼容性，我们在此处重新加载配置并使用原逻辑，但鉴于我们已重写，我们可以将并行逻辑中的 max_workers 强制设为1
-        # 最简单的方式：调用并行逻辑但传入 max_workers=1
-        # 但为了不破坏封装，我们可以通过修改配置临时覆盖
-        # 这里我们直接执行：将 self.context.config["executor"]["max_workers"] 临时置为1，然后调用并行方法
-        # 但为安全，我们直接复制原串行代码（略），因为原代码很长，这里我们不再重复，可以假设用户使用并行模式即可。
-        self.logger.warning("串行模式未实现，请设置 max_workers >= 2 或使用旧版脚本")
-        return False
+    # ================== 任务执行（串行/并行统一） ==================
+    def _run_tasks(self, tasks, max_workers):
+        """执行任务列表，支持串行/并行，返回 (raw_metrics, success_count, total_tasks)"""
+        raw_metrics = {
+            "buckets": defaultdict(
+                lambda: {
+                    "input_samples": 0,
+                    "output_samples": 0,
+                    "input_turn_dist": defaultdict(int),
+                    "output_turn_dist": defaultdict(int),
+                }
+            ),
+            "total_input": 0,
+            "total_output": 0,
+            "input_turn_dist": defaultdict(int),
+            "output_turn_dist": defaultdict(int),
+        }
+        success_count = 0
+        total_tasks = len(tasks)
+
+        if max_workers <= 1:
+            # 串行执行
+            for task in tqdm(tasks, desc="清洗文件", unit="file"):
+                result = self._clean_file_worker(task)
+                if result is not None:
+                    bucket_name, stats = result
+                    self._merge_stats(raw_metrics, bucket_name, stats)
+                    success_count += 1
+        else:
+            # 并行执行
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                future_to_task = {
+                    executor.submit(self._clean_file_worker, task): task
+                    for task in tasks
+                }
+                with tqdm(total=total_tasks, desc="清洗文件", unit="file") as pbar:
+                    for future in as_completed(future_to_task):
+                        task = future_to_task[future]
+                        try:
+                            result = future.result(timeout=600)  # 10分钟超时
+                            if result is not None:
+                                bucket_name, stats = result
+                                self._merge_stats(raw_metrics, bucket_name, stats)
+                                success_count += 1
+                                pbar.set_postfix(
+                                    {
+                                        "成功": success_count,
+                                        "失败": total_tasks - success_count,
+                                    }
+                                )
+                        except Exception as e:
+                            self.logger.error(
+                                f"文件 {task['input_file'].name} 清洗异常: {e}"
+                            )
+                        pbar.update(1)
+
+        return raw_metrics, success_count, total_tasks
+
+    # ================== 合并统计 ==================
+    def _merge_stats(self, raw_metrics, bucket_name, stats):
+        b_stats = raw_metrics["buckets"][bucket_name]
+        b_stats["input_samples"] += stats["input_samples"]
+        b_stats["output_samples"] += stats["output_samples"]
+        for t, c in stats["input_turn_dist"].items():
+            b_stats["input_turn_dist"][t] += c
+            raw_metrics["input_turn_dist"][t] += c
+        for t, c in stats["output_turn_dist"].items():
+            b_stats["output_turn_dist"][t] += c
+            raw_metrics["output_turn_dist"][t] += c
+        raw_metrics["total_input"] += stats["input_samples"]
+        raw_metrics["total_output"] += stats["output_samples"]
 
     # ================== Worker 函数（静态方法） ==================
     @staticmethod
@@ -282,56 +273,59 @@ class CleanStep(PipelineStep):
         else:
             config_content += f"\nwork_dir: {trace_dir}\n"
 
-        # 写入临时配置文件（使用唯一名称避免冲突）
+        # 写入临时配置文件（使用进程ID避免冲突）
         temp_config = Path(f"temp_{input_file.stem}_{os.getpid()}.yaml")
-        with open(temp_config, "w", encoding="utf-8") as f:
-            f.write(config_content)
-
-        # 构建命令
-        dj_process = shutil.which("dj-process")
-        if dj_process is None:
-            dj_process = [shutil.which("python"), "-m", "data_juicer.core.process_data"]
-        else:
-            dj_process = [dj_process]
-        cmd = dj_process + ["--config", str(temp_config)]
-
         try:
-            # 静默执行（不输出到控制台）
+            with open(temp_config, "w", encoding="utf-8") as f:
+                f.write(config_content)
+
+            # 构建命令
+            dj_process = shutil.which("dj-process")
+            if dj_process is None:
+                dj_process = [
+                    shutil.which("python"),
+                    "-m",
+                    "data_juicer.core.process_data",
+                ]
+            else:
+                dj_process = [dj_process]
+            cmd = dj_process + ["--config", str(temp_config)]
+
+            # 静默执行
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=600,  # 单个文件10分钟超时
             )
+
+            if result.returncode != 0 or not output_file.exists():
+                return None
+
+            # 统计输出
+            output_cnt = CleanStep._count_lines(output_file)
+            output_dist = CleanStep._collect_turn_dist(output_file)
+
+            stats = {
+                "input_samples": input_cnt,
+                "output_samples": output_cnt,
+                "input_turn_dist": input_dist,
+                "output_turn_dist": output_dist,
+            }
+            return (bucket_name, stats)
+
         except subprocess.TimeoutExpired:
-            # 超时，清理临时文件并返回失败
-            try:
-                temp_config.unlink()
-            except:
-                pass
+            # 超时，直接返回失败
+            return None
+        except Exception:
             return None
         finally:
-            # 清理临时配置
-            try:
-                temp_config.unlink()
-            except:
-                pass
-
-        if result.returncode != 0 or not output_file.exists():
-            # 失败
-            return None
-
-        # 统计输出
-        output_cnt = CleanStep._count_lines(output_file)
-        output_dist = CleanStep._collect_turn_dist(output_file)
-
-        stats = {
-            "input_samples": input_cnt,
-            "output_samples": output_cnt,
-            "input_turn_dist": input_dist,
-            "output_turn_dist": output_dist,
-        }
-        return (bucket_name, stats)
+            # ===== 关键：确保删除临时文件 =====
+            if temp_config.exists():
+                try:
+                    temp_config.unlink()
+                except Exception:
+                    pass
 
     # ================== 辅助静态方法 ==================
     @staticmethod

@@ -1,12 +1,16 @@
 """
-流水线调度器
+流水线调度器（修改版）
+- 移除 executor.type 判断，统一使用 SequentialExecutor（步骤顺序执行）
+- 全局并行控制由 executor.max_workers 提供默认值，具体步骤可覆盖
+- 步骤内部的并行由各步骤自己实现（通过 max_workers 参数）
 """
 
 import sys
 from pathlib import Path
 from typing import Optional
+
 from .context import PipelineContext
-from .executor import SequentialExecutor, BaseExecutor
+from .executor import SequentialExecutor
 from .step_registry import StepRegistry
 from ..config.loader import ConfigLoader
 from ..utils.logger import setup_task_logger
@@ -25,6 +29,7 @@ class Pipeline:
         else:
             raise ValueError("必须提供 config_path 或 config_dict")
 
+        # 初始化上下文
         self.context = PipelineContext(self.config)
 
         # 设置日志
@@ -40,10 +45,10 @@ class Pipeline:
         self.context.set_logger(logger)
         self.logger = logger
 
-        # 打印目录树
+        # 打印任务目录树
         self.context.print_task_tree()
 
-        # 步骤顺序
+        # 步骤执行顺序
         self.steps_order = self.config.get("steps_order", [])
         if not self.steps_order:
             default_order = [
@@ -59,19 +64,22 @@ class Pipeline:
                 s for s in default_order if s in self.config.get("steps", {})
             ]
 
-        # 执行器
-        executor_type = self.config.get("executor", {}).get("type", "sequential")
-        if executor_type == "sequential":
-            self.executor = SequentialExecutor(self.context)
-        else:
-            self.logger.warning(f"执行器 {executor_type} 未实现，降级为 sequential")
-            self.executor = SequentialExecutor(self.context)
+        # ========== 关键修改：移除 executor.type 判断 ==========
+        # 直接使用 SequentialExecutor（步骤按顺序执行）
+        # 步骤内部的并行由各步骤通过 max_workers 控制
+        self.executor = SequentialExecutor(self.context)
+        # 读取全局默认并行数（供步骤参考，步骤可覆盖）
+        global_max_workers = self.config.get("executor", {}).get("max_workers", 1)
+        self.logger.info(
+            f"执行器使用 sequential（步骤内并行由各步骤的 max_workers 控制，全局默认: {global_max_workers}）"
+        )
+        # ======================================================
 
     def run(self, step_name: Optional[str] = None) -> bool:
         if step_name:
             return self._run_single(step_name)
 
-        # 顺序执行
+        # 顺序执行所有步骤（通过 SequentialExecutor）
         tasks = [lambda n=name: self._run_single(n) for name in self.steps_order]
         results = self.executor.execute(tasks)
 

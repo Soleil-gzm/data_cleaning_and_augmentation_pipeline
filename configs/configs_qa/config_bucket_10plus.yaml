@@ -5,10 +5,10 @@ text_keys: text
 np: 16
 skip_op_error: true
 open_tracer: true
-trace_num: 1000
+trace_num: 1000000
 
 process:
   - whitespace_normalization_mapper:
   - text_length_filter:
       min_len: 1
-      max_len: 5000
+      max_len: 50000000
