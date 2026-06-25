@@ -145,7 +145,7 @@ steps:
   # 步骤04：应用清洗结果，生成最终训练数据（标记 loss）
   # ================================================================
   04_finalize:
-    enabled: true                          # 暂不启用
+    enabled: false                        # 暂不启用
     original_json: "datas/raw_data/data-simulation-4809-modify.json"   # 原始对话（与 01 输入一致）
     cleaned_root: "{task_dir}/cleaned_jsonl" # 清洗结果根目录
     output_root: "{task_dir}/final_training_data"  # 最终训练数据输出根目录
@@ -155,7 +155,7 @@ steps:
   # 步骤05：语义增强（可配置多种增强操作权重）
   # ================================================================
   05_augment:
-    enabled: false                          # 暂不启用（启用时改为 true）
+    enabled: false                           # 暂不启用（启用时改为 true）
     # 输入数据（三选一，优先级：input_file > source_run_id > 自动查找最新 _final）
     source_run_id: null                     # 例如 "20250624_120000_clean_default_final"
     input_file: null                        # 例如 "{task_dir}/final_training_data/latest_final/cleaned_training_data.json"
