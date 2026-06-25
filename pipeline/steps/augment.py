@@ -1,5 +1,5 @@
 """
-05_augment：语义增强，带进度条，预留策略接口
+05_augment：语义增强，带进度条，预留策略接口,输入指定 final run_id 或自动查找最新
 """
 
 import json
@@ -10,12 +10,12 @@ from copy import deepcopy
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
+from tqdm import tqdm
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ..core.step import PipelineStep
 from ..utils.progress import get_progress_bar
-
 from common import augment_utils_add as aug_utils
 
 
@@ -23,23 +23,23 @@ class AugmentStep(PipelineStep):
     def run(self) -> bool:
         cfg = self.context.get_step_config("05_augment")
 
-        # 解析输入文件
-        source_run_id = cfg.get("source_run_id")
+        # 确定输入文件
+        source_run_id = cfg.get("source_run_id")  # 指定 final run_id
         input_file = cfg.get("input_file")
+
         if input_file:
             input_path = self.context.resolve_path(input_file)
         elif source_run_id:
-            input_path = (
-                self.context.task_dir
-                / "final_training_data"
-                / source_run_id
-                / "cleaned_training_data.json"
-            )
-        else:
             final_root = self.context.task_dir / "final_training_data"
-            latest = self._get_latest_final_dir(final_root)
-            if latest:
-                input_path = final_root / latest / "cleaned_training_data.json"
+            input_path = final_root / source_run_id / "cleaned_training_data.json"
+        else:
+            # 自动查找最新的 final run_id
+            final_root = self.context.task_dir / "final_training_data"
+            latest_final_dir = self._get_latest_final_dir(final_root)
+            if latest_final_dir:
+                input_path = (
+                    final_root / latest_final_dir / "cleaned_training_data.json"
+                )
             else:
                 self.logger.error(
                     "无法确定输入文件，请配置 source_run_id 或 input_file"
@@ -50,14 +50,26 @@ class AugmentStep(PipelineStep):
             self.logger.error(f"输入文件不存在: {input_path}")
             return False
 
-        output_dir = self.context.resolve_path(
-            cfg.get("output_dir", "{task_dir}/output_augmented_data")
+        # 解析出源 run_id（用于记录）
+        source_run_id = (
+            input_path.parent.name
+            if input_path.parent.name.endswith("_final")
+            else "unknown"
         )
+
+        # 生成增强 run_id
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tag = cfg.get("tag", self.context.task_name)
-        output_dir = output_dir / f"{timestamp}_augment_{tag}"
+        tag = cfg.get("tag", "augment")
+        run_id = f"{timestamp}_augment_{tag}"
+
+        # 输出目录
+        output_base = cfg.get("output_dir") or (
+            self.context.task_dir / "output_augmented_data"
+        )
+        output_dir = Path(output_base) / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # 参数
         num_variants = cfg.get("num_variants", 3)
         target_roles = cfg.get("target_roles", ["user"])
         only_loss_true = cfg.get("only_loss_true", True)
@@ -68,14 +80,16 @@ class AugmentStep(PipelineStep):
         if augment_weights:
             augment_weights = {k: float(v) for k, v in augment_weights.items()}
 
+        self.logger.info(f"增强 run_id: {run_id}")
         self.logger.info(f"输入: {input_path}")
         self.logger.info(f"输出: {output_dir}")
-        self.logger.info(f"变体数: {num_variants}, 目标角色: {target_roles}")
 
+        # 加载 ASR 增强器
         asr_cache_cfg = cfg.get("asr_cache", {})
         if asr_cache_cfg:
             self._load_asr_augmenter(asr_cache_cfg)
 
+        # 加载数据
         with open(input_path, "r", encoding="utf-8") as f:
             original_data = json.load(f)
         self.logger.info(f"原始对话数: {len(original_data)}")
@@ -101,6 +115,7 @@ class AugmentStep(PipelineStep):
         total_variants = 0
         failed = []
 
+        # 进度条
         pbar = get_progress_bar(
             range(len(original_data)), desc="语义增强", unit="dialog", show=True
         )
@@ -126,39 +141,54 @@ class AugmentStep(PipelineStep):
         if failed:
             self.logger.warning(f"失败对话: {len(failed)}")
 
+        # 保存
         all_dialogues = all_original + all_variants
-        save_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        combined_json = output_dir / f"combined_augmented_{save_timestamp}.json"
-        combined_jsonl = output_dir / f"combined_augmented_{save_timestamp}.jsonl"
+        combined_json = output_dir / f"combined_augmented_{timestamp}.json"
+        combined_jsonl = output_dir / f"combined_augmented_{timestamp}.jsonl"
+        variants_json = output_dir / f"variants_only_{timestamp}.json"
+        variants_jsonl = output_dir / f"variants_only_{timestamp}.jsonl"
 
         with open(combined_json, "w", encoding="utf-8") as f:
             json.dump(all_dialogues, f, ensure_ascii=False, indent=2)
         with open(combined_jsonl, "w", encoding="utf-8") as f:
             for d in all_dialogues:
                 f.write(json.dumps(d, ensure_ascii=False) + "\n")
-
-        variants_json = output_dir / f"variants_only_{save_timestamp}.json"
-        variants_jsonl = output_dir / f"variants_only_{save_timestamp}.jsonl"
-
         with open(variants_json, "w", encoding="utf-8") as f:
             json.dump(all_variants, f, ensure_ascii=False, indent=2)
         with open(variants_jsonl, "w", encoding="utf-8") as f:
             for d in all_variants:
                 f.write(json.dumps(d, ensure_ascii=False) + "\n")
 
-        self.logger.info(f"合并文件: {combined_json}")
-        self.logger.info(f"仅变体: {variants_json}")
+        # 元数据
+        metadata = {
+            "run_id": run_id,
+            "step": "augment",
+            "source_run_id": source_run_id,
+            "source_file": str(input_path),
+            "timestamp": timestamp,
+            "tag": tag,
+            "config": enhance_config,
+            "statistics": {
+                "original_dialogues": len(original_data),
+                "generated_variants": total_variants,
+                "total_dialogues": len(all_dialogues),
+                "failed_dialogues": failed,
+            },
+            "output_files": {
+                "combined": [str(combined_json), str(combined_jsonl)],
+                "variants_only": [str(variants_json), str(variants_jsonl)],
+            },
+        }
+        metadata_path = output_dir / "run_metadata.json"
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
 
-        self._output_paths = [
-            combined_json,
-            variants_json,
-            combined_jsonl,
-            variants_jsonl,
-        ]
+        self.logger.info(f"增强完成，结果保存在: {output_dir}")
         return True
 
     def _get_latest_final_dir(self, final_root: Path):
+        """获取最新 final run_id 目录"""
         if not final_root.exists():
             return None
         dirs = [
@@ -166,8 +196,8 @@ class AugmentStep(PipelineStep):
         ]
         if not dirs:
             return None
-        dirs.sort(reverse=True)
-        return dirs[0].name
+        dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return dirs[0].name  # 返回目录名（即 run_id）
 
     def _load_asr_augmenter(self, asr_cfg: dict):
         try:

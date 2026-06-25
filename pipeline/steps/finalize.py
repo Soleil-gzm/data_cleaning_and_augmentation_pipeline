@@ -1,5 +1,5 @@
 """
-04_finalize：应用清洗结果，标记 loss
+04_finalize：应用清洗结果，标记 loss，生成最终训练数据，输出带 _final 后缀
 """
 
 import json
@@ -8,29 +8,36 @@ from collections import defaultdict
 from datetime import datetime
 
 from ..core.step import PipelineStep
+from ..utils.file_utils import find_latest_file
 
 
 class FinalizeStep(PipelineStep):
     def run(self) -> bool:
         cfg = self.context.get_step_config("04_finalize")
-        original_json = self.context.resolve_path(
-            cfg.get("original_json", "{task_dir}/raw_dialogues.json")
+        original_json = cfg.get("original_json") or (
+            self.context.task_dir / "raw_dialogues.json"
         )
-        cleaned_root = self.context.resolve_path(
-            cfg.get("cleaned_root", "{task_dir}/cleaned_jsonl")
+        cleaned_root = cfg.get("cleaned_root") or (
+            self.context.task_dir / "cleaned_jsonl"
         )
-        output_root = self.context.resolve_path(
-            cfg.get("output_root", "{task_dir}/final_training_data")
+        output_root = cfg.get("output_root") or (
+            self.context.task_dir / "final_training_data"
         )
-        source_run_id = cfg.get("source_run_id")
+        source_run_id = cfg.get("source_run_id")  # 可指定清洗的 run_id
+
+        original_json = Path(original_json)
+        cleaned_root = Path(cleaned_root)
+        output_root = Path(output_root)
 
         if not original_json.exists():
             self.logger.error(f"原始对话不存在: {original_json}")
             return False
 
+        # 确定清洗结果目录
         if source_run_id:
             cleaned_dir = cleaned_root / source_run_id
         else:
+            # 自动查找最新的清洗 run_id 目录（按修改时间）
             cleaned_dir = self._get_latest_clean_dir(cleaned_root)
 
         if cleaned_dir is None or not cleaned_dir.exists():
@@ -40,26 +47,33 @@ class FinalizeStep(PipelineStep):
         run_id = cleaned_dir.name
         self.logger.info(f"使用清洗结果: {run_id}")
 
+        # 加载原始数据
         with open(original_json, "r", encoding="utf-8") as f:
             dialogues = json.load(f)
         self.logger.info(f"原始对话数: {len(dialogues)}")
 
+        # 收集保留的 turns
         kept_turns = self._collect_kept_turns(cleaned_dir)
         total_kept = sum(len(v) for v in kept_turns.values())
         self.logger.info(f"保留轮次数: {total_kept}")
 
+        # 应用 loss
         final_data = self._apply_loss(dialogues, kept_turns)
 
-        output_dir = output_root / f"{run_id}_final"
+        # 输出目录：加 _final 后缀
+        final_run_id = f"{run_id}_final"
+        output_dir = output_root / final_run_id
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / "cleaned_training_data.json"
 
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(final_data, f, ensure_ascii=False, indent=2)
 
+        # 元数据
         metadata = {
-            "run_id": f"{run_id}_final",
-            "source_run_id": run_id,
+            "run_id": final_run_id,
+            "step": "finalize",
+            "source_clean_run_id": run_id,
             "timestamp": datetime.now().isoformat(),
             "statistics": {
                 "total_dialogues": len(final_data),
@@ -77,25 +91,21 @@ class FinalizeStep(PipelineStep):
                 ),
             },
         }
-        with open(output_dir / "run_metadata.json", "w") as f:
+        with open(output_dir / "run_metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
         self.logger.info(f"✅ 最终数据已保存: {output_file}")
-        self._output_paths = [output_file]
         return True
 
     def _get_latest_clean_dir(self, cleaned_root: Path):
+        """获取最新清洗 run_id 目录"""
         if not cleaned_root.exists():
             return None
         # 匹配包含 "_clean_" 或以 "_clean" 结尾的目录
-        dirs = [
-            d
-            for d in cleaned_root.iterdir()
-            if d.is_dir() and ("_clean_" in d.name or d.name.endswith("_clean"))
-        ]
+        dirs = [d for d in cleaned_root.iterdir() if d.is_dir() and "_clean_" in d.name]
         if not dirs:
             return None
-        dirs.sort(reverse=True)
+        dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         return dirs[0]
 
     def _collect_kept_turns(self, cleaned_dir: Path):

@@ -1,5 +1,5 @@
 """
-03_clean 步骤：并行清洗（文件级），支持进度条连续更新
+03_clean 步骤：并行清洗（文件级），支持进度条连续更新,输出带 run_id 隔离
 """
 
 import json
@@ -10,9 +10,11 @@ import subprocess
 from pathlib import Path
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
 from tqdm import tqdm
 
 from ..core.step import PipelineStep
+from ..utils.file_utils import get_file_stats
 from ..analyzers.registry import AnalyzerRegistry
 from ..reporters.registry import ReporterRegistry
 
@@ -27,18 +29,21 @@ class CleanStep(PipelineStep):
         trace_root = cfg.get("trace_root") or (self.context.task_dir / "trace_output")
         configs_dir = Path(cfg.get("configs_dir", "configs/configs_qa"))
         bucket_config_map = cfg.get("bucket_config_map", [])
+        tag = cfg.get("tag", "default")
 
-        # 并行配置：全局默认 + 步骤覆盖
+        # 生成 run_id
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_id = f"{timestamp}_clean_{tag}"
+
+        # 并行配置
         global_workers = self.context.config.get("executor", {}).get("max_workers", 1)
         max_workers = cfg.get("max_workers", global_workers)
-        # 如果 max_workers <= 1，降级为串行模式（保留原逻辑）
         if max_workers <= 1:
-            return self._run_serial(
-                bucketed_root, cleaned_root, trace_root, configs_dir, bucket_config_map
-            )
+            self.logger.warning("max_workers <= 1，降级为串行模式（建议使用并行）")
+            # 可调用串行逻辑，但此处直接使用并行但 max_workers=1 也可以，但为了简单，我们复用并行逻辑并强制 max_workers=1
+            max_workers = 1
 
-        # 并行模式
-        self.logger.info(f"启用并行清洗，最大进程数: {max_workers}")
+        self.logger.info(f"清洗 run_id: {run_id}, 并行度: {max_workers}")
 
         # 检查分桶目录
         bucketed_root_path = Path(bucketed_root)
@@ -46,17 +51,14 @@ class CleanStep(PipelineStep):
             self.logger.error(f"分桶目录不存在: {bucketed_root_path}")
             return False
 
-        # 收集所有桶及其文件
-        all_tasks = (
-            []
-        )  # 每个任务：(bucket_name, input_file, output_file, trace_dir, config_file)
+        # 收集所有任务
+        all_tasks = []
         bucket_dirs = [d for d in bucketed_root_path.iterdir() if d.is_dir()]
         if not bucket_dirs:
             self.logger.error("分桶目录为空")
             return False
 
-        # 创建输出根目录
-        run_id = f"{self.context.task_name}_clean"
+        # 创建带 run_id 的输出目录
         cleaned_base = Path(cleaned_root) / run_id
         trace_base = Path(trace_root) / run_id
         cleaned_base.mkdir(parents=True, exist_ok=True)
@@ -64,7 +66,6 @@ class CleanStep(PipelineStep):
 
         for bucket_dir in bucket_dirs:
             bucket_name = bucket_dir.name
-            # 匹配配置文件
             config_filename = self._get_config_for_bucket(
                 bucket_name, bucket_config_map
             )
@@ -81,14 +82,8 @@ class CleanStep(PipelineStep):
             output_dir.mkdir(parents=True, exist_ok=True)
             trace_dir.mkdir(parents=True, exist_ok=True)
 
-            input_files = list(bucket_dir.glob("*.jsonl"))
-            if not input_files:
-                self.logger.warning(f"桶 {bucket_name} 无 JSONL 文件")
-                continue
-
-            for input_file in input_files:
+            for input_file in bucket_dir.glob("*.jsonl"):
                 output_file = output_dir / input_file.name
-                # 每个文件独立的 trace 子目录（避免冲突）
                 file_trace_dir = trace_dir / input_file.stem
                 all_tasks.append(
                     {
@@ -106,7 +101,7 @@ class CleanStep(PipelineStep):
 
         self.logger.info(f"共发现 {len(all_tasks)} 个文件待清洗")
 
-        # 使用进度条和进程池执行
+        # 并行执行
         raw_metrics = {
             "buckets": defaultdict(
                 lambda: {
@@ -121,7 +116,6 @@ class CleanStep(PipelineStep):
             "input_turn_dist": defaultdict(int),
             "output_turn_dist": defaultdict(int),
         }
-
         success_count = 0
         total_tasks = len(all_tasks)
 
@@ -182,13 +176,41 @@ class CleanStep(PipelineStep):
         self.logger.info(f"清洗完成: {success_count}/{total_tasks} 个文件成功")
 
         # 保存原始指标
-        metrics_path = (
-            self.context.task_dir / "reports" / run_id / "raw_clean_metrics.json"
-        )
-        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        report_base = self.context.task_dir / "reports" / run_id
+        report_base.mkdir(parents=True, exist_ok=True)
+        metrics_path = report_base / "raw_clean_metrics.json"
         with open(metrics_path, "w", encoding="utf-8") as f:
             json.dump(raw_metrics, f, indent=2)
-        self.logger.info(f"原始清洗指标已保存: {metrics_path}")
+
+        # 保存元数据
+        metadata = {
+            "run_id": run_id,
+            "step": "clean",
+            "timestamp": timestamp,
+            "tag": tag,
+            "input_bucketed_root": str(bucketed_root_path),
+            "output_cleaned_root": str(cleaned_base),
+            "output_trace_root": str(trace_base),
+            "max_workers": max_workers,
+            "statistics": {
+                "total_input_files": total_tasks,
+                "success_files": success_count,
+                "failed_files": total_tasks - success_count,
+                "total_input_samples": raw_metrics["total_input"],
+                "total_output_samples": raw_metrics["total_output"],
+                "retention_rate": (
+                    raw_metrics["total_output"] / raw_metrics["total_input"]
+                    if raw_metrics["total_input"] > 0
+                    else 0
+                ),
+            },
+        }
+        with open(report_base / "run_metadata.json", "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+
+        self.logger.info(
+            f"清洗 run_id: {run_id} 完成，元数据保存至 {report_base}/run_metadata.json"
+        )
 
         # 触发分析器和报告器
         self._run_analyzers_and_reporters(raw_metrics, run_id)
