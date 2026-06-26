@@ -21,4 +21,5 @@ resources/prev_clean
 __pycache__
 test/common/__pycache__
 resources/prev_clean
+*/__pycache__
 
