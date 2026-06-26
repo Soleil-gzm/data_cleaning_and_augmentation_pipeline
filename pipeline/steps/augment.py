@@ -1,29 +1,177 @@
 """
 05_augment：语义增强（使用新增强器架构）
-完全替代 common/，所有增强逻辑由 pipeline.augmenters 提供
+
+完全替代 pipeline/common/ 中的旧实现，所有增强逻辑由 pipeline.augmenters 提供。
+
+核心特性：
+1. 随机源可控（所有增强器接受 rng 参数，保证 seed 可复现）
+2. 多步叠加增强（支持 single / multi_step 两种组合策略）
+3. 旧配置兼容（augment_weights 自动转换为新格式，similarword / synonym 别名自动映射）
+4. 消息级 / 多句处理（按 "/" 分割后逐句增强再合并）
+5. 变体有效性检查（确保每条变体至少修改了一处，避免空变体）
+6. IO 审计（实现 _get_input_paths / _get_output_paths）
 """
 import json
 import random
-import sys
-import os
+import re
 from copy import deepcopy
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import List, Tuple, Dict, Any
+
 from tqdm import tqdm
 
 from ..core.step import PipelineStep
-from ..augmenters import CompositeAugmenter, AugmenterRegistry
+from ..augmenters import CompositeAugmenter
 
-# 导入以确保所有增强器已注册
+# 导入以确保所有增强器已注册（同时注册别名）
 from ..augmenters import *  # noqa
 
 
+# 名字别名映射（兼容旧配置里的 similarword 等名字）
+NAME_ALIAS = {
+    "similarword": "synonym_replace",
+    "synonym": "synonym_replace",
+    "entity_replace": "random_entity_replace",
+}
+
+
+def _get_enhanceable_indices(messages, target_roles, only_loss_true):
+    """返回可以增强的消息索引列表"""
+    indices = []
+    for idx, msg in enumerate(messages):
+        role = msg.get("role")
+        if role not in target_roles:
+            continue
+        content = msg.get("content", "")
+        if not content or not str(content).strip():
+            continue
+        if only_loss_true:
+            loss_val = msg.get("loss")
+            if isinstance(loss_val, str):
+                loss_val = loss_val.lower() == "true"
+            elif not isinstance(loss_val, bool):
+                loss_val = False
+            if not loss_val:
+                continue
+        indices.append(idx)
+    return indices
+
+
+def _apply_text_to_content(content: str, composite: CompositeAugmenter,
+                            strategy: str, min_steps: int, max_steps: int,
+                            rng: random.Random) -> str:
+    """
+    对一条消息的 content 应用增强。
+    - 若包含 '/' 或 '／'，按多句分别增强后用 '/' 合并
+    - 根据 strategy 选择 single / multi_step
+    """
+    if not isinstance(content, str) or not content.strip():
+        return content
+
+    if '/' in content or '／' in content:
+        parts = re.split(r'[／/]', content)
+        enhanced_parts = []
+        for p in parts:
+            enhanced_parts.append(_apply_single(p, composite, strategy, min_steps, max_steps, rng))
+        return '/'.join(enhanced_parts)
+
+    return _apply_single(content, composite, strategy, min_steps, max_steps, rng)
+
+
+def _apply_single(text: str, composite: CompositeAugmenter,
+                  strategy: str, min_steps: int, max_steps: int,
+                  rng: random.Random) -> str:
+    if strategy == "multi_step":
+        return composite.multi_step_apply(text, min_steps=min_steps,
+                                          max_steps=max_steps, rng=rng)
+    return composite.apply(text, rng=rng)
+
+
+def _enhance_dialogue(dialogue: Dict[str, Any], config: Dict[str, Any],
+                      rng: random.Random, composite: CompositeAugmenter) -> List[Dict[str, Any]]:
+    """对单条对话生成变体列表（保证每条变体至少修改了一处）"""
+    messages = dialogue.get("messages", [])
+    if not messages:
+        return []
+
+    enhanceable = _get_enhanceable_indices(
+        messages, config["target_roles"], config["only_loss_true"]
+    )
+    if not enhanceable:
+        return []
+
+    num_variants = config["num_variants_per_dialogue"]
+    if config.get("adaptive_variants", False):
+        # 根据可增强消息数自适应：最少 1，最多 5
+        num_variants = max(1, min(5, len(enhanceable)))
+
+    msg_prob = config.get("message_augment_prob", 1.0)
+    strategy = config.get("strategy", "single")
+    min_steps = config.get("min_steps", 1)
+    max_steps = config.get("max_steps", min_steps)
+
+    variants = []
+    for _ in range(num_variants):
+        try:
+            new_dialogue = deepcopy(dialogue)
+            new_messages = new_dialogue["messages"]
+            changed = False
+            for idx in enhanceable:
+                if rng.random() > msg_prob:
+                    continue
+                original_text = new_messages[idx].get("content", "")
+                if not original_text:
+                    continue
+                new_text = _apply_text_to_content(
+                    original_text, composite, strategy, min_steps, max_steps, rng
+                )
+                if new_text != original_text:
+                    new_messages[idx]["content"] = new_text
+                    changed = True
+            # 只保留真正修改过的变体（避免产生空变体）
+            if changed:
+                variants.append(new_dialogue)
+        except Exception:
+            continue
+    return variants
+
+
+# ======================================================================
+# 模块级 Worker（放在外层以避免进程间 pickling 闭包问题）
+# ======================================================================
+def _augment_chunk_worker(task: Dict[str, Any]) -> Tuple[List[Dict], List[Dict], List[int]]:
+    chunk = task["chunk"]
+    config = task["config"]
+    seed = task["seed"]
+    rng = random.Random(seed)
+
+    composite = CompositeAugmenter(config["composite_config"])
+
+    original_list = []
+    variants_list = []
+    failed_indices = []
+
+    for idx, dialogue in enumerate(chunk):
+        original_list.append(dialogue)
+        try:
+            vars_out = _enhance_dialogue(dialogue, config, rng, composite)
+            variants_list.extend(vars_out)
+        except Exception:
+            failed_indices.append(idx)
+
+    return original_list, variants_list, failed_indices
+
+
+# ======================================================================
+# Pipeline 步骤
+# ======================================================================
 class AugmentStep(PipelineStep):
     def run(self) -> bool:
         cfg = self.context.get_step_config("05_augment")
 
-        # 确定输入文件
+        # ---------- 确定输入文件 ----------
         source_run_id = cfg.get("source_run_id")
         input_file = cfg.get("input_file")
 
@@ -45,21 +193,29 @@ class AugmentStep(PipelineStep):
             self.logger.error(f"输入文件不存在: {input_path}")
             return False
 
-        # 生成 run_id
+        # ---------- 生成 run_id ----------
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         tag = cfg.get("tag", "augment")
         run_id = f"{timestamp}_augment_{tag}"
 
-        # 输出目录
+        # ---------- 输出目录 ----------
         output_base = cfg.get("output_dir") or (self.context.task_dir / "output_augmented_data")
         output_dir = Path(output_base) / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
+        self._output_paths = [
+            output_dir / f"combined_augmented_{timestamp}.json",
+            output_dir / f"combined_augmented_{timestamp}.jsonl",
+            output_dir / f"variants_only_{timestamp}.json",
+            output_dir / f"variants_only_{timestamp}.jsonl",
+            output_dir / "run_metadata.json",
+        ]
+        self._input_paths = [input_path]
 
-        # 并行配置
+        # ---------- 并行配置 ----------
         global_workers = self.context.config.get("executor", {}).get("max_workers", 1)
         max_workers = cfg.get("max_workers", global_workers)
 
-        # 参数
+        # ---------- 参数 ----------
         num_variants = cfg.get("num_variants", 3)
         target_roles = cfg.get("target_roles", ["user"])
         only_loss_true = cfg.get("only_loss_true", True)
@@ -67,26 +223,41 @@ class AugmentStep(PipelineStep):
         seed = cfg.get("seed", 42)
         message_augment_prob = cfg.get("message_augment_prob", 1.0)
 
-        # 构建增强器配置
+        # 多步叠加参数
+        strategy = cfg.get("strategy", "single")  # single | multi_step
+        min_steps = cfg.get("min_steps", 1)
+        max_steps = cfg.get("max_steps", min_steps)
+
+        # ---------- 构建增强器配置 ----------
         augmenters_cfg = cfg.get("augmenters", {})
 
-        # 兼容旧格式：如果使用 augment_weights，转换为新格式
+        # 兼容旧格式：若未提供 augmenters，尝试从 augment_weights 转换
         if not augmenters_cfg:
             augment_weights = cfg.get("augment_weights", {})
+            augmenters_cfg = {}
             for name, weight in augment_weights.items():
                 if weight > 0:
-                    augmenters_cfg[name] = {"enabled": True, "weight": weight}
+                    real_name = NAME_ALIAS.get(name, name)
+                    augmenters_cfg[real_name] = {
+                        "enabled": True,
+                        "weight": float(weight),
+                    }
 
-        composite_config = {"augmenters": augmenters_cfg}
+        composite_config = {
+            "augmenters": augmenters_cfg,
+            "strategy": strategy,
+            "default_steps": max_steps,
+        }
 
         self.logger.info(f"增强 run_id: {run_id}")
         self.logger.info(f"输入: {input_path}")
         self.logger.info(f"输出: {output_dir}")
         self.logger.info(f"启用增强器: {list(augmenters_cfg.keys())}")
+        self.logger.info(f"组合策略: {strategy}, min_steps={min_steps}, max_steps={max_steps}")
         if max_workers > 1:
             self.logger.info(f"并行模式，进程数: {max_workers}")
 
-        # 加载数据
+        # ---------- 加载数据 ----------
         with open(input_path, "r", encoding="utf-8") as f:
             original_data = json.load(f)
         self.logger.info(f"原始对话数: {len(original_data)}")
@@ -98,12 +269,17 @@ class AugmentStep(PipelineStep):
             "adaptive_variants": adaptive_variants,
             "message_augment_prob": message_augment_prob,
             "composite_config": composite_config,
-            "seed": seed
+            "strategy": strategy,
+            "min_steps": min_steps,
+            "max_steps": max_steps,
+            "seed": seed,
         }
 
-        # 执行增强
+        # ---------- 执行增强 ----------
         if max_workers <= 1:
-            all_original, all_variants, total_variants, failed = self._run_serial(original_data, enhance_config)
+            all_original, all_variants, total_variants, failed = self._run_serial(
+                original_data, enhance_config
+            )
         else:
             all_original, all_variants, total_variants, failed = self._run_parallel(
                 original_data, enhance_config, max_workers
@@ -113,7 +289,7 @@ class AugmentStep(PipelineStep):
         if failed:
             self.logger.warning(f"失败对话: {len(failed)}")
 
-        # 保存结果
+        # ---------- 保存结果 ----------
         all_dialogues = all_original + all_variants
         combined_json = output_dir / f"combined_augmented_{timestamp}.json"
         combined_jsonl = output_dir / f"combined_augmented_{timestamp}.jsonl"
@@ -142,8 +318,8 @@ class AugmentStep(PipelineStep):
                 "original_dialogues": len(original_data),
                 "generated_variants": total_variants,
                 "total_dialogues": len(all_dialogues),
-                "failed_dialogues": failed
-            }
+                "failed_dialogues": failed,
+            },
         }
         with open(output_dir / "run_metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
@@ -164,7 +340,7 @@ class AugmentStep(PipelineStep):
         for idx, dialogue in enumerate(data):
             all_original.append(dialogue)
             try:
-                variants = self._enhance_dialogue(dialogue, config, rng, composite)
+                variants = _enhance_dialogue(dialogue, config, rng, composite)
                 all_variants.extend(variants)
                 total_variants += len(variants)
             except Exception as e:
@@ -174,8 +350,9 @@ class AugmentStep(PipelineStep):
 
     # ========== 并行模式 ==========
     def _run_parallel(self, data, config, max_workers):
-        chunk_size = max(1, len(data) // max_workers)
-        chunks = [data[i:i+chunk_size] for i in range(0, len(data), chunk_size)]
+        # 向上取整，避免出现空 chunk
+        chunk_size = max(1, (len(data) + max_workers - 1) // max_workers)
+        chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
 
         tasks = []
         for worker_id, chunk in enumerate(chunks):
@@ -196,7 +373,7 @@ class AugmentStep(PipelineStep):
 
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {
-                executor.submit(self._augment_chunk_worker, task): task
+                executor.submit(_augment_chunk_worker, task): task
                 for task in tasks
             }
 
@@ -217,85 +394,6 @@ class AugmentStep(PipelineStep):
 
         return all_original, all_variants, total_variants, failed
 
-    # ========== Worker 函数 ==========
-    @staticmethod
-    def _augment_chunk_worker(task):
-        chunk = task["chunk"]
-        config = task["config"]
-        seed = task["seed"]
-        rng = random.Random(seed)
-
-        from ..augmenters import CompositeAugmenter
-        composite = CompositeAugmenter(config["composite_config"])
-
-        def enhance_dialogue(dialogue, config, rng, composite):
-            messages = dialogue.get("messages", [])
-            if not messages:
-                return []
-
-            enhanceable = get_enhanceable_indices(messages, config["target_roles"], config["only_loss_true"])
-            if not enhanceable:
-                return []
-
-            num_variants = config["num_variants_per_dialogue"]
-            if config["adaptive_variants"]:
-                num_variants = max(1, min(5, len(enhanceable) // 2))
-
-            msg_prob = config.get("message_augment_prob", 1.0)
-
-            variants = []
-            for _ in range(num_variants):
-                try:
-                    new_dialogue = deepcopy(dialogue)
-                    new_messages = new_dialogue["messages"]
-                    for idx in enhanceable:
-                        if rng.random() > msg_prob:
-                            continue
-                        original_text = new_messages[idx].get("content", "")
-                        if not original_text:
-                            continue
-                        new_text = composite.apply(original_text)
-                        if new_text != original_text:
-                            new_messages[idx]["content"] = new_text
-                    variants.append(new_dialogue)
-                except Exception:
-                    continue
-            return variants
-
-        def get_enhanceable_indices(messages, target_roles, only_loss_true):
-            indices = []
-            for idx, msg in enumerate(messages):
-                role = msg.get("role")
-                if role not in target_roles:
-                    continue
-                content = msg.get("content", "")
-                if not content.strip():
-                    continue
-                if only_loss_true:
-                    loss_val = msg.get("loss")
-                    if isinstance(loss_val, str):
-                        loss_val = loss_val.lower() == "true"
-                    elif not isinstance(loss_val, bool):
-                        loss_val = False
-                    if not loss_val:
-                        continue
-                indices.append(idx)
-            return indices
-
-        original_list = []
-        variants_list = []
-        failed_indices = []
-
-        for idx, dialogue in enumerate(chunk):
-            original_list.append(dialogue)
-            try:
-                vars_out = enhance_dialogue(dialogue, config, rng, composite)
-                variants_list.extend(vars_out)
-            except Exception:
-                failed_indices.append(idx)
-
-        return original_list, variants_list, failed_indices
-
     # ========== 辅助方法 ==========
     def _get_latest_final_dir(self, final_root):
         if not final_root.exists():
@@ -306,56 +404,8 @@ class AugmentStep(PipelineStep):
         dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         return dirs[0].name
 
-    def _enhance_dialogue(self, dialogue, config, rng, composite):
-        messages = dialogue.get("messages", [])
-        if not messages:
-            return []
+    def _get_input_paths(self):
+        return getattr(self, "_input_paths", [])
 
-        enhanceable = self._get_enhanceable_indices(messages, config["target_roles"], config["only_loss_true"])
-        if not enhanceable:
-            return []
-
-        num_variants = config["num_variants_per_dialogue"]
-        if config["adaptive_variants"]:
-            num_variants = max(1, min(5, len(enhanceable) // 2))
-
-        msg_prob = config.get("message_augment_prob", 1.0)
-
-        variants = []
-        for _ in range(num_variants):
-            try:
-                new_dialogue = deepcopy(dialogue)
-                new_messages = new_dialogue["messages"]
-                for idx in enhanceable:
-                    if rng.random() > msg_prob:
-                        continue
-                    original_text = new_messages[idx].get("content", "")
-                    if not original_text:
-                        continue
-                    new_text = composite.apply(original_text)
-                    if new_text != original_text:
-                        new_messages[idx]["content"] = new_text
-                variants.append(new_dialogue)
-            except Exception:
-                continue
-        return variants
-
-    def _get_enhanceable_indices(self, messages, target_roles, only_loss_true):
-        indices = []
-        for idx, msg in enumerate(messages):
-            role = msg.get("role")
-            if role not in target_roles:
-                continue
-            content = msg.get("content", "")
-            if not content.strip():
-                continue
-            if only_loss_true:
-                loss_val = msg.get("loss")
-                if isinstance(loss_val, str):
-                    loss_val = loss_val.lower() == "true"
-                elif not isinstance(loss_val, bool):
-                    loss_val = False
-                if not loss_val:
-                    continue
-            indices.append(idx)
-        return indices
+    def _get_output_paths(self):
+        return getattr(self, "_output_paths", [])

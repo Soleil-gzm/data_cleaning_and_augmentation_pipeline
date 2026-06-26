@@ -1,6 +1,7 @@
 """
-同音字替换（基于预定义同音词库）
+同音字替换增强器
 """
+from typing import Optional
 import random
 from .base import BaseAugmenter
 from .utils import tokenize, load_homophone_dict
@@ -12,7 +13,7 @@ class HomophoneAugmenter(BaseAugmenter):
         self.homophone_dict = load_homophone_dict(dict_path)
         self.prob = self.config.get("prob", 0.2)
 
-    def apply(self, text: str) -> str:
+    def apply(self, text: str, rng: Optional[random.Random] = None) -> str:
         self.initialize()
         if not self.homophone_dict:
             return text
@@ -21,10 +22,10 @@ class HomophoneAugmenter(BaseAugmenter):
             return text
         new_tokens = []
         for token in tokens:
-            if token in self.homophone_dict and random.random() < self.prob:
+            if token in self.homophone_dict and self._rand(rng) < self.prob:
                 homophones = self.homophone_dict[token]
                 if homophones:
-                    new_tokens.append(random.choice(homophones))
+                    new_tokens.append(self._choice(homophones, rng))
                     continue
             new_tokens.append(token)
         return ''.join(new_tokens)
