@@ -1,7 +1,7 @@
 """
-05_augment：语义增强（并行版，支持 ASR 在子进程中加载）
+05_augment：语义增强（使用新增强器架构）
+完全替代 common/，所有增强逻辑由 pipeline.augmenters 提供
 """
-
 import json
 import random
 import sys
@@ -12,9 +12,11 @@ from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common import augment_utils_add as aug_utils
 from ..core.step import PipelineStep
+from ..augmenters import CompositeAugmenter, AugmenterRegistry
+
+# 导入以确保所有增强器已注册
+from ..augmenters import *  # noqa
 
 
 class AugmentStep(PipelineStep):
@@ -34,13 +36,9 @@ class AugmentStep(PipelineStep):
             final_root = self.context.task_dir / "final_training_data"
             latest_final_dir = self._get_latest_final_dir(final_root)
             if latest_final_dir:
-                input_path = (
-                    final_root / latest_final_dir / "cleaned_training_data.json"
-                )
+                input_path = final_root / latest_final_dir / "cleaned_training_data.json"
             else:
-                self.logger.error(
-                    "无法确定输入文件，请配置 source_run_id 或 input_file"
-                )
+                self.logger.error("无法确定输入文件，请配置 source_run_id 或 input_file")
                 return False
 
         if not input_path.exists():
@@ -53,9 +51,7 @@ class AugmentStep(PipelineStep):
         run_id = f"{timestamp}_augment_{tag}"
 
         # 输出目录
-        output_base = cfg.get("output_dir") or (
-            self.context.task_dir / "output_augmented_data"
-        )
+        output_base = cfg.get("output_dir") or (self.context.task_dir / "output_augmented_data")
         output_dir = Path(output_base) / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -70,81 +66,50 @@ class AugmentStep(PipelineStep):
         adaptive_variants = cfg.get("adaptive_variants", False)
         seed = cfg.get("seed", 42)
         message_augment_prob = cfg.get("message_augment_prob", 1.0)
-        augment_weights = cfg.get("augment_weights", None)
-        if augment_weights:
-            augment_weights = {k: float(v) for k, v in augment_weights.items()}
+
+        # 构建增强器配置
+        augmenters_cfg = cfg.get("augmenters", {})
+
+        # 兼容旧格式：如果使用 augment_weights，转换为新格式
+        if not augmenters_cfg:
+            augment_weights = cfg.get("augment_weights", {})
+            for name, weight in augment_weights.items():
+                if weight > 0:
+                    augmenters_cfg[name] = {"enabled": True, "weight": weight}
+
+        composite_config = {"augmenters": augmenters_cfg}
 
         self.logger.info(f"增强 run_id: {run_id}")
         self.logger.info(f"输入: {input_path}")
         self.logger.info(f"输出: {output_dir}")
+        self.logger.info(f"启用增强器: {list(augmenters_cfg.keys())}")
         if max_workers > 1:
             self.logger.info(f"并行模式，进程数: {max_workers}")
-
-        # 解析 ASR 配置（获取绝对路径，用于 worker）
-        asr_cache_cfg = cfg.get("asr_cache", {})
-        asr_config_abs = None
-        if asr_cache_cfg:
-            project_root = self.context.intermediate_root.parent
-            asr_config_abs = {}
-            for key in ["vectors_path", "pinyin_path", "prev_map_path", "model_path"]:
-                val = asr_cache_cfg.get(key)
-                if val:
-                    p = Path(val)
-                    if not p.is_absolute():
-                        p = project_root / p
-                    asr_config_abs[key] = str(p)
-                else:
-                    asr_config_abs[key] = None
-
-            # 主进程加载 ASR（用于日志）
-            try:
-                from common.asr_noise_augmenter import AsrNoiseAugmenter
-
-                asr_augmenter = AsrNoiseAugmenter(
-                    vectors_path=asr_config_abs.get("vectors_path"),
-                    pinyin_path=asr_config_abs.get("pinyin_path"),
-                    prev_map_path=asr_config_abs.get("prev_map_path"),
-                    model_path=asr_config_abs.get("model_path"),
-                )
-                aug_utils.set_asr_augmenter(asr_augmenter)
-                self.logger.info("ASR 增强器已加载（主进程）")
-            except Exception as e:
-                self.logger.warning(f"主进程加载 ASR 增强器失败: {e}")
 
         # 加载数据
         with open(input_path, "r", encoding="utf-8") as f:
             original_data = json.load(f)
         self.logger.info(f"原始对话数: {len(original_data)}")
 
-        # 增强配置
         enhance_config = {
             "num_variants_per_dialogue": num_variants,
             "target_roles": target_roles,
             "only_loss_true": only_loss_true,
             "adaptive_variants": adaptive_variants,
             "message_augment_prob": message_augment_prob,
-            "augment_kwargs": {
-                "num_variants": 1,
-                "min_steps": 2,
-                "max_steps": 3,
-                "augment_weights": augment_weights,
-            },
-            "seed": seed,
+            "composite_config": composite_config,
+            "seed": seed
         }
 
         # 执行增强
         if max_workers <= 1:
-            all_original, all_variants, total_variants, failed = self._run_serial(
-                original_data, enhance_config
-            )
+            all_original, all_variants, total_variants, failed = self._run_serial(original_data, enhance_config)
         else:
             all_original, all_variants, total_variants, failed = self._run_parallel(
-                original_data, enhance_config, max_workers, asr_config_abs
+                original_data, enhance_config, max_workers
             )
 
-        self.logger.info(
-            f"✅ 增强完成: 原始 {len(all_original)}, 变体 {total_variants}"
-        )
+        self.logger.info(f"✅ 增强完成: 原始 {len(all_original)}, 变体 {total_variants}")
         if failed:
             self.logger.warning(f"失败对话: {len(failed)}")
 
@@ -177,8 +142,8 @@ class AugmentStep(PipelineStep):
                 "original_dialogues": len(original_data),
                 "generated_variants": total_variants,
                 "total_dialogues": len(all_dialogues),
-                "failed_dialogues": failed,
-            },
+                "failed_dialogues": failed
+            }
         }
         with open(output_dir / "run_metadata.json", "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
@@ -194,10 +159,12 @@ class AugmentStep(PipelineStep):
         failed = []
         rng = random.Random(config["seed"])
 
+        composite = CompositeAugmenter(config["composite_config"])
+
         for idx, dialogue in enumerate(data):
             all_original.append(dialogue)
             try:
-                variants = self._enhance_dialogue(dialogue, config, rng, idx)
+                variants = self._enhance_dialogue(dialogue, config, rng, composite)
                 all_variants.extend(variants)
                 total_variants += len(variants)
             except Exception as e:
@@ -206,22 +173,19 @@ class AugmentStep(PipelineStep):
         return all_original, all_variants, total_variants, failed
 
     # ========== 并行模式 ==========
-    def _run_parallel(self, data, config, max_workers, asr_config_abs):
+    def _run_parallel(self, data, config, max_workers):
         chunk_size = max(1, len(data) // max_workers)
-        chunks = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
+        chunks = [data[i:i+chunk_size] for i in range(0, len(data), chunk_size)]
 
         tasks = []
         for worker_id, chunk in enumerate(chunks):
             worker_seed = config["seed"] + worker_id * 1000 + 1
-            tasks.append(
-                {
-                    "chunk": chunk,
-                    "config": config,
-                    "seed": worker_seed,
-                    "worker_id": worker_id,
-                    "asr_config_abs": asr_config_abs,  # 传递ASR配置
-                }
-            )
+            tasks.append({
+                "chunk": chunk,
+                "config": config,
+                "seed": worker_seed,
+                "worker_id": worker_id,
+            })
 
         self.logger.info(f"分 {len(tasks)} 个chunk，每个约 {chunk_size} 条对话")
 
@@ -248,9 +212,7 @@ class AugmentStep(PipelineStep):
                         pbar.update(len(task["chunk"]))
                         pbar.set_postfix({"变体": total_variants, "失败": len(failed)})
                     except Exception as e:
-                        self.logger.error(
-                            f"chunk (worker {task['worker_id']}) 失败: {e}"
-                        )
+                        self.logger.error(f"chunk (worker {task['worker_id']}) 失败: {e}")
                         pbar.update(len(task["chunk"]))
 
         return all_original, all_variants, total_variants, failed
@@ -258,38 +220,20 @@ class AugmentStep(PipelineStep):
     # ========== Worker 函数 ==========
     @staticmethod
     def _augment_chunk_worker(task):
-        # ---------- 加载 ASR 增强器 ----------
-        asr_config = task.get("asr_config_abs")
-        if asr_config:
-            try:
-                from common.asr_noise_augmenter import AsrNoiseAugmenter
-
-                asr_augmenter = AsrNoiseAugmenter(
-                    vectors_path=asr_config.get("vectors_path"),
-                    pinyin_path=asr_config.get("pinyin_path"),
-                    prev_map_path=asr_config.get("prev_map_path"),
-                    model_path=asr_config.get("model_path"),
-                )
-                aug_utils.set_asr_augmenter(asr_augmenter)
-            except Exception:
-                # 加载失败则静默跳过（ASR增强不可用）
-                pass
-        # ------------------------------------
-
         chunk = task["chunk"]
         config = task["config"]
         seed = task["seed"]
         rng = random.Random(seed)
 
-        # 增强函数（完全复用原版逻辑）
-        def enhance_dialogue(dialogue, config, rng, dialog_id):
+        from ..augmenters import CompositeAugmenter
+        composite = CompositeAugmenter(config["composite_config"])
+
+        def enhance_dialogue(dialogue, config, rng, composite):
             messages = dialogue.get("messages", [])
             if not messages:
                 return []
 
-            enhanceable = get_enhanceable_indices(
-                messages, config["target_roles"], config["only_loss_true"]
-            )
+            enhanceable = get_enhanceable_indices(messages, config["target_roles"], config["only_loss_true"])
             if not enhanceable:
                 return []
 
@@ -297,7 +241,6 @@ class AugmentStep(PipelineStep):
             if config["adaptive_variants"]:
                 num_variants = max(1, min(5, len(enhanceable) // 2))
 
-            aug_kwargs = config["augment_kwargs"]
             msg_prob = config.get("message_augment_prob", 1.0)
 
             variants = []
@@ -311,11 +254,9 @@ class AugmentStep(PipelineStep):
                         original_text = new_messages[idx].get("content", "")
                         if not original_text:
                             continue
-                        variants_list = aug_utils.augment_cell_multi(
-                            original_text, **aug_kwargs
-                        )
-                        if variants_list and variants_list[0] != original_text:
-                            new_messages[idx]["content"] = variants_list[0]
+                        new_text = composite.apply(original_text)
+                        if new_text != original_text:
+                            new_messages[idx]["content"] = new_text
                     variants.append(new_dialogue)
                 except Exception:
                     continue
@@ -348,7 +289,7 @@ class AugmentStep(PipelineStep):
         for idx, dialogue in enumerate(chunk):
             original_list.append(dialogue)
             try:
-                vars_out = enhance_dialogue(dialogue, config, rng, idx)
+                vars_out = enhance_dialogue(dialogue, config, rng, composite)
                 variants_list.extend(vars_out)
             except Exception:
                 failed_indices.append(idx)
@@ -359,25 +300,18 @@ class AugmentStep(PipelineStep):
     def _get_latest_final_dir(self, final_root):
         if not final_root.exists():
             return None
-        dirs = [
-            d for d in final_root.iterdir() if d.is_dir() and d.name.endswith("_final")
-        ]
+        dirs = [d for d in final_root.iterdir() if d.is_dir() and d.name.endswith("_final")]
         if not dirs:
             return None
         dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         return dirs[0].name
 
-    def _enhance_dialogue(self, dialogue, config, rng, dialog_id):
-        # 串行模式直接调用原版增强逻辑，此处为了兼容保留
-        # 直接使用 worker 中的内部函数会重复，但此处只用于串行，所以我们用相同的代码
-        # 为简化，直接复制 worker 中的 enhance_dialogue 逻辑
+    def _enhance_dialogue(self, dialogue, config, rng, composite):
         messages = dialogue.get("messages", [])
         if not messages:
             return []
 
-        enhanceable = get_enhanceable_indices(
-            messages, config["target_roles"], config["only_loss_true"]
-        )
+        enhanceable = self._get_enhanceable_indices(messages, config["target_roles"], config["only_loss_true"])
         if not enhanceable:
             return []
 
@@ -385,7 +319,6 @@ class AugmentStep(PipelineStep):
         if config["adaptive_variants"]:
             num_variants = max(1, min(5, len(enhanceable) // 2))
 
-        aug_kwargs = config["augment_kwargs"]
         msg_prob = config.get("message_augment_prob", 1.0)
 
         variants = []
@@ -399,12 +332,30 @@ class AugmentStep(PipelineStep):
                     original_text = new_messages[idx].get("content", "")
                     if not original_text:
                         continue
-                    variants_list = aug_utils.augment_cell_multi(
-                        original_text, **aug_kwargs
-                    )
-                    if variants_list and variants_list[0] != original_text:
-                        new_messages[idx]["content"] = variants_list[0]
+                    new_text = composite.apply(original_text)
+                    if new_text != original_text:
+                        new_messages[idx]["content"] = new_text
                 variants.append(new_dialogue)
             except Exception:
                 continue
         return variants
+
+    def _get_enhanceable_indices(self, messages, target_roles, only_loss_true):
+        indices = []
+        for idx, msg in enumerate(messages):
+            role = msg.get("role")
+            if role not in target_roles:
+                continue
+            content = msg.get("content", "")
+            if not content.strip():
+                continue
+            if only_loss_true:
+                loss_val = msg.get("loss")
+                if isinstance(loss_val, str):
+                    loss_val = loss_val.lower() == "true"
+                elif not isinstance(loss_val, bool):
+                    loss_val = False
+                if not loss_val:
+                    continue
+            indices.append(idx)
+        return indices
