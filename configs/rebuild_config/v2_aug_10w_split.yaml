@@ -7,7 +7,7 @@
 # ===================================================================
 
 # ------------------- 基础任务信息 -------------------
-task_name: "General_10w_split"          # 任务名称，会作为 intermediate 下的子目录名
+task_name: "General_10w_split_v3"          # 任务名称，会作为 intermediate 下的子目录名
 resume: false                             # 断点续跑（true=跳过已完成步骤）
 
 # ------------------- 执行器配置（预留并行） -------------------
@@ -160,35 +160,40 @@ steps:
 # ===== 全局执行器配置 =====
   05_augment:
     enabled: true
-    max_workers: 32                  
+    max_workers: 32
     num_variants: 2
     adaptive_variants: false
     message_augment_prob: 1
+    target_roles: ["assistant"]
+    only_loss_true: true
+    source_run_id: null
+    tag: "augment_v1"
+    input_file: null
     # 增强器列表（按需启用）
     augmenters:
       synonym_replace:
         enabled: true
         weight: 1.0
-        prob: 0.3
+        prob: 1
         dict_path: "resources/synonyms.txt"
       stutter:
         enabled: false
         weight: 0.8
-        prob: 0.2
+        prob: 0.5
       reorder:
         enabled: false
         weight: 0.5
-        prob: 0.2
+        prob: 0.5
       word_repetition:
         enabled: false
         weight: 1.2
-        prob: 0.15
+        prob: 0.5
       insert_filler:
         enabled: false
         weight: 0.6
-        prob: 0.3
+        prob: 0.5
       asr_noise:
-        enabled: false               # 默认关闭，需要时改为 true
+        enabled: false
         weight: 2.0
         prob: 0.5
         vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_vectors.pkl"
