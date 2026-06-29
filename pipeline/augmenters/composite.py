@@ -40,18 +40,19 @@ class CompositeAugmenter(BaseAugmenter):
         for name, sub in augmenters_cfg.items():
             if not isinstance(sub, dict):
                 continue
-            if not sub.get("enabled", False):
+            if not sub.get("enabled", False):      # 跳过未启用的
                 continue
             cat = AugmenterRegistry.get_category(name) or CATEGORY_LEXICAL
-            if enabled_cats is not None and cat not in enabled_cats:
+            if enabled_cats is not None and cat not in enabled_cats:  # 跳过不在启用类别中的
                 continue
             weight = float(sub.get("weight", 1.0))
-            if weight <= 0:
+            if weight <= 0:                          # 跳过权重为 0 的
                 continue
-            aug = AugmenterRegistry.get(name, sub)
-            self.augmenters.append(aug)
-            self.weights.append(weight)
-            self.names.append(name)
+            
+            aug = AugmenterRegistry.get(name, sub)   # 从注册表拿实例
+            self.augmenters.append(aug)              # 放入列表
+            self.weights.append(weight)             # 记录权重
+            self.names.append(name)                 # 记录名字
             self.by_category.setdefault(cat, []).append(len(self.augmenters) - 1)
 
         if not self.augmenters:
@@ -68,6 +69,7 @@ class CompositeAugmenter(BaseAugmenter):
     # ---------- 基础能力 ----------
     def _pick_one(self, rng: Optional[random.Random] = None,
                  category: Optional[str] = None) -> BaseAugmenter:
+        ''' 按权重随机挑一个增强器 '''
         if category is None or category not in self.by_category or not self.by_category[category]:
             candidates_idx = list(range(len(self.augmenters)))
             weights = self.weights
@@ -122,6 +124,7 @@ class CompositeAugmenter(BaseAugmenter):
         max_steps: Optional[int] = None,
         rng: Optional[random.Random] = None,
     ) -> str:
+        ''' 挑 N 个 增强器 依次叠加 应用。N 在 [min_steps, max_steps] 之间随机。叠加是"链式"的 。 '''
         if max_steps is None:
             max_steps = max(min_steps, self.default_steps)
         if max_steps < min_steps:

@@ -164,38 +164,38 @@ steps:
     num_variants: 2
     adaptive_variants: false
     message_augment_prob: 1
-    target_roles: ["assistant"]
-    only_loss_true: true
+    target_roles: ["user"]
+    only_loss_true: false
     source_run_id: null
     tag: "augment_v1"
     input_file: null
     # 增强器列表（按需启用）
     augmenters:
-      synonym_replace:
+      synonym_replace:    # 失败
         enabled: true
         weight: 1.0
         prob: 1
         dict_path: "resources/synonyms.txt"
-      stutter:
+      stutter:      # 实现
         enabled: false
-        weight: 0.8
-        prob: 0.5
-      reorder:
+        weight: 1
+        prob: 1
+      reorder:    # 实现
         enabled: false
-        weight: 0.5
-        prob: 0.5
-      word_repetition:
+        weight: 1
+        prob: 1
+      word_repetition:  # 实现
         enabled: false
-        weight: 1.2
-        prob: 0.5
-      insert_filler:
+        weight: 1
+        prob: 1
+      insert_filler:  # 实现
         enabled: false
-        weight: 0.6
-        prob: 0.5
-      asr_noise:
+        weight: 1
+        prob: 1
+      asr_noise:    # 失败
         enabled: false
         weight: 2.0
-        prob: 0.5
+        prob: 1
         vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_vectors.pkl"
         pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_pinyin.pkl"
         prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/prev_to_abnormals.pkl"
