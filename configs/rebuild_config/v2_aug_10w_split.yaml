@@ -172,7 +172,7 @@ steps:
     # 增强器列表（按需启用）
     augmenters:
       synonym_replace:    # 失败
-        enabled: true
+        enabled: false
         weight: 1.0
         prob: 1
         dict_path: "resources/synonyms.txt"
@@ -193,9 +193,10 @@ steps:
         weight: 1
         prob: 1
       asr_noise:    # 失败
-        enabled: false
+        enabled: true
         weight: 2.0
         prob: 1
+        device: "cuda:7"  # 使用 GPU 7（可选 cuda:6 或 cuda:7）
         vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_vectors.pkl"
         pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_pinyin.pkl"
         prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/prev_to_abnormals.pkl"

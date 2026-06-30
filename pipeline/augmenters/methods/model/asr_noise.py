@@ -10,6 +10,7 @@ ASR 噪声增强器（model）
 资源参数（config 支持）：
     vectors_path   / pinyin_path / prev_map_path / model_path / model_name
     prob / alpha / max_operations / insert_prob / retry_times
+    device         : 指定设备（如 "cuda:7"、"cpu"），默认自动检测
     encoder        : 可注入已预加载的 SentenceTransformer（用于多进程共享）
 """
 
@@ -22,38 +23,20 @@ from typing import Optional, List
 
 from ...base import BaseAugmenter
 
+# ── 模块级缓存（Worker 进程内共享，避免每个实例重复加载） ──
+_module_cache = {
+    "word_to_vec": None,   # 主进程预编码的 {word: np.ndarray}
+    "encoder": None,       # SentenceTransformer 实例（仅在无预编码时使用）
+}
+
 AFFIRMATIVE_WORDS = {
-    "是",
-    "有",
-    "能",
-    "可以",
-    "行",
-    "好",
-    "对",
-    "是的",
-    "没错",
-    "肯定",
-    "必须",
-    "需要",
-    "会",
-    "应该",
+    "是", "有", "能", "可以", "行", "好", "对", "是的", "没错",
+    "肯定", "必须", "需要", "会", "应该",
 }
 
 NEGATIVE_WORDS = {
-    "不",
-    "没",
-    "无",
-    "别",
-    "不要",
-    "不用",
-    "不行",
-    "不是",
-    "没有",
-    "不能",
-    "不可以",
-    "否定",
-    "不会",
-    "不该",
+    "不", "没", "无", "别", "不要", "不用", "不行", "不是", "没有",
+    "不能", "不可以", "否定", "不会", "不该",
 }
 
 
@@ -67,17 +50,28 @@ class AsrNoiseAugmenter(BaseAugmenter):
             return None
         path = Path(p)
         if not path.is_absolute():
-            root = (
-                Path(__file__).resolve().parents[4]
-            )  # pipeline/augmenters/methods/model -> project root
+            root = Path(__file__).resolve().parents[4]
             path = root / path
         return str(path)
 
+    @staticmethod
+    def _has_shared(shared, key):
+        """安全检查共享资源中某个 key 是否存在且非空"""
+        val = shared.get(key)
+        if val is None:
+            return False
+        if isinstance(val, np.ndarray):
+            return val.size > 0
+        if isinstance(val, (list, tuple, dict, set)):
+            return len(val) > 0
+        return bool(val)
+
     def _load_resources(self):
-        # 若有主进程注入的共享资源，优先使用（避免重复加载）
         shared = self.config.get("shared_resources")
+
+        # ── 路径 A：从共享资源加载（Worker 进程）──
         if shared and all(
-            shared.get(k)
+            self._has_shared(shared, k)
             for k in (
                 "asr_noise.abnormal_words",
                 "asr_noise.abnormal_vectors",
@@ -93,7 +87,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
             self.pinyin_dict = shared["asr_noise.pinyin_dict"]
             self.prev_to_abnormals = shared.get("asr_noise.prev_to_abnormals", {})
             saved_cfg = shared.get("asr_noise.config", {})
-            self.prob = float(saved_cfg.get("prob", self.config.get("prob", 0.5)))
+            self.prob = float(saved_cfg.get("prob", self.config.get("prob", 1.0)))
             self.alpha = float(saved_cfg.get("alpha", self.config.get("alpha", 0.7)))
             self.max_operations = int(
                 saved_cfg.get("max_operations", self.config.get("max_operations", 2))
@@ -106,24 +100,27 @@ class AsrNoiseAugmenter(BaseAugmenter):
             )
             self.dim = int(saved_cfg.get("dim", self.abnormal_vectors.shape[1]))
 
-            # 共享资源仅包含权重/词典，encoder 仍需在子进程内懒加载（可选开启）
-            if self.config.get("load_encoder_with_shared", False):
+            # 从模块级缓存或共享资源获取预编码向量
+            self._setup_word_to_vec()
+
+            # 如果没有预编码向量，需要加载 encoder 作为 fallback
+            if self._word_to_vec is None:
                 try:
-                    self._load_encoder(
-                        self._resolve(self.config.get("model_path")),
-                        self.config.get(
-                            "model_name", "paraphrase-multilingual-MiniLM-L12-v2"
-                        ),
+                    model_path = self._resolve(self.config.get("model_path"))
+                    model_name = self.config.get(
+                        "model_name", "paraphrase-multilingual-MiniLM-L12-v2"
                     )
+                    self._load_encoder(model_path, model_name)
                 except Exception as e:
                     self._ready = False
-                    self._load_error = f"shared encoder 加载失败: {e}"
+                    self._load_error = f"asr_noise encoder 加载失败: {e}"
                     return
+
             self._ready = True
             self._load_error = None
             return
 
-        # 常规磁盘加载路径
+        # ── 路径 B：从磁盘加载（主进程 / 串行模式）──
         vectors_path = self._resolve(self.config.get("vectors_path"))
         pinyin_path = self._resolve(self.config.get("pinyin_path"))
         prev_map_path = self._resolve(self.config.get("prev_map_path"))
@@ -160,7 +157,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
             return
 
         self.dim = self.abnormal_vectors.shape[1]
-        self.prob = float(self.config.get("prob", 0.5))
+        self.prob = float(self.config.get("prob", 1.0))
         self.alpha = float(self.config.get("alpha", 0.7))
         self.max_operations = int(self.config.get("max_operations", 2))
         self.insert_prob = float(self.config.get("insert_prob", 0.2))
@@ -168,23 +165,72 @@ class AsrNoiseAugmenter(BaseAugmenter):
         self._ready = True
         self._load_error = None
 
+    def _setup_word_to_vec(self):
+        """
+        设置 word_to_vec：优先从模块级缓存读取，其次从 config 注入读取。
+        Worker 进程中，主进程预编码的向量通过 task dict 注入到 config。
+        """
+        # 1. 检查模块级缓存（同一进程内的多个实例共享）
+        if _module_cache["word_to_vec"] is not None:
+            self._word_to_vec = _module_cache["word_to_vec"]
+            return
+
+        # 2. 检查 config 注入（Worker 进程首次调用时）
+        injected = self.config.get("asr_noise.word_to_vec")
+        if injected:
+            self._word_to_vec = injected
+            _module_cache["word_to_vec"] = injected
+            return
+
+        # 3. 无预编码向量
+        self._word_to_vec = None
+
     def _load_encoder(self, model_path: Optional[str], model_name: str):
+        """加载 SentenceTransformer 模型（仅在无预编码向量时调用）"""
         if self._encoder_injected is not None:
             self.encoder = self._encoder_injected
             return
+
+        # 检查模块级缓存
+        if _module_cache["encoder"] is not None:
+            self.encoder = _module_cache["encoder"]
+            return
+
         try:
             from sentence_transformers import SentenceTransformer
+            import torch
         except ImportError as e:
             raise RuntimeError(
                 "asr_noise 需要 sentence_transformers 库；请先 `pip install sentence-transformers`，"
                 "或在配置中把 asr_noise.enabled 设为 false"
             ) from e
-        if model_path and Path(model_path).exists():
-            self.encoder = SentenceTransformer(model_path)
-        else:
-            self.encoder = SentenceTransformer(model_name)
 
-    # ---------- 工具 ----------
+        # 自动检测 GPU
+        device = self.config.get("device", None)
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        if model_path and Path(model_path).exists():
+            self.encoder = SentenceTransformer(model_path, device=device)
+        else:
+            self.encoder = SentenceTransformer(model_name, device=device)
+
+        # 缓存到模块级
+        _module_cache["encoder"] = self.encoder
+
+    def _get_target_vec(self, target_word: str) -> Optional[np.ndarray]:
+        """获取 target_word 的语义向量：优先查表，其次用 encoder 编码"""
+        # 1. 查预编码表
+        if self._word_to_vec is not None and target_word in self._word_to_vec:
+            return self._word_to_vec[target_word]
+
+        # 2. 用 encoder 编码（仅在无预编码表时）
+        if self.encoder is not None:
+            return self.encoder.encode([target_word])[0]
+
+        # 3. 无 encoder 也无预编码，无法计算
+        return None
+
     def _pinyin_similarity(self, w1: str, w2: str) -> float:
         p1 = self.pinyin_dict.get(w1, "")
         p2 = self.pinyin_dict.get(w2, "")
@@ -194,8 +240,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
         if max_len == 0:
             return 1.0
         try:
-            import Levenshtein  # type: ignore
-
+            import Levenshtein
             dist = Levenshtein.distance(p1, p2)
             return 1 - dist / max_len
         except ImportError:
@@ -218,39 +263,41 @@ class AsrNoiseAugmenter(BaseAugmenter):
         self.initialize()
         if not getattr(self, "_ready", False):
             return []
-        if prev_word and prev_word in self.prev_to_abnormals:
-            candidates = self.prev_to_abnormals[prev_word]
-        else:
-            candidates = self.abnormal_words
-        if not candidates:
+
+        target_vec = self._get_target_vec(target_word)
+        if target_vec is None:
             return []
 
-        target_vec = self.encoder.encode([target_word])[0]
-        scores = []
-        for ab in candidates:
-            idx = self.word_to_idx.get(ab)
-            if idx is None:
-                continue
-            sem_sim = self._cosine_sim(target_vec, self.abnormal_vectors[idx])
-            pin_sim = self._pinyin_similarity(target_word, ab)
-            combined = self.alpha * pin_sim + (1 - self.alpha) * sem_sim
-            scores.append((ab, combined))
-        scores.sort(key=lambda x: x[1], reverse=True)
+        # 先尝试上下文相关候选（prev_to_abnormals）
+        candidates_pool = None
+        if prev_word and prev_word in self.prev_to_abnormals:
+            candidates_pool = self.prev_to_abnormals[prev_word]
+
+        def _score(candidates):
+            if not candidates:
+                return []
+            scores = []
+            for ab in candidates:
+                idx = self.word_to_idx.get(ab)
+                if idx is None:
+                    continue
+                sem_sim = self._cosine_sim(target_vec, self.abnormal_vectors[idx])
+                pin_sim = self._pinyin_similarity(target_word, ab)
+                combined = self.alpha * pin_sim + (1 - self.alpha) * sem_sim
+                scores.append((ab, combined))
+            scores.sort(key=lambda x: x[1], reverse=True)
+            return scores
+
+        scores = _score(candidates_pool)
+        if len(scores) < top_k:
+            fallback = _score(self.abnormal_words)
+            existing = {w for w, _ in scores}
+            for w, s in fallback:
+                if w not in existing:
+                    scores.append((w, s))
+            scores.sort(key=lambda x: x[1], reverse=True)
+
         return [ab for ab, _ in scores[:top_k]]
-
-    # ---------- 核心增强算法 ----------
-    _SKIP_CHARS = set('，。！？、；：""' "（）《》【】…—·\t\r\n")
-
-    def _is_valid_target(self, word: str) -> bool:
-        if not word or not word.strip():
-            return False
-        if len(word) <= 1:
-            return False
-        if any(c in self._SKIP_CHARS for c in word):
-            return False
-        if word.isdigit():
-            return False
-        return True
 
     def _enhance_once(self, sentence: str, rng=None) -> str:
         try:
@@ -264,17 +311,22 @@ class AsrNoiseAugmenter(BaseAugmenter):
         if len(words) < 2:
             return sentence
 
-        candidate_indices = []
+        # 第一优先级：有上下文的候选
+        context_candidates = []
         for i in range(1, len(words)):
             if words[i - 1] in self.prev_to_abnormals:
-                if self._is_valid_target(words[i]):
-                    candidate_indices.append(i)
-        if not candidate_indices:
+                context_candidates.append(i)
+
+        # 第二优先级：全量词表回退
+        if not context_candidates:
+            context_candidates = list(range(len(words)))
+
+        if not context_candidates:
             return sentence
 
-        max_ops = min(self.max_operations, len(candidate_indices))
+        max_ops = min(self.max_operations, len(context_candidates))
         selected = []
-        shuffled = self._sample(candidate_indices, len(candidate_indices), rng)
+        shuffled = self._sample(context_candidates, len(context_candidates), rng)
         for idx in shuffled:
             if not selected or all(abs(idx - x) >= 2 for x in selected):
                 selected.append(idx)
@@ -283,8 +335,8 @@ class AsrNoiseAugmenter(BaseAugmenter):
 
         operations = []
         for pos in selected:
-            prev_word = words[pos - 1]
             target_word = words[pos]
+            prev_word = words[pos - 1] if pos > 0 else None
 
             if self._rand(rng) > self.prob:
                 continue
@@ -350,7 +402,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
 
     def _apply_single(self, text: str, rng) -> str:
         original = text
-        for _ in range(self.retry_times):
+        for i in range(self.retry_times):
             result = self._enhance_once(original, rng=rng)
             if result != original:
                 return result
