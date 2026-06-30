@@ -1,6 +1,8 @@
 """
 同义词替换增强器（lexical）
 """
+
+from pathlib import Path
 from typing import Optional
 import random
 
@@ -9,8 +11,19 @@ from ...utils import tokenize, load_synonym_dict
 
 
 class SynonymAugmenter(BaseAugmenter):
+    def _resolve(self, p):
+        if p is None:
+            return None
+        path = Path(p)
+        if not path.is_absolute():
+            root = Path(__file__).resolve().parents[4]
+            path = root / path
+        return str(path)
+
     def _load_resources(self):
-        dict_path = self.config.get("dict_path", "resources/synonyms.txt")
+        dict_path = self._resolve(
+            self.config.get("dict_path", "resources/synonyms.txt")
+        )
         self.synonym_dict = load_synonym_dict(dict_path)
         self.prob = float(self.config.get("prob", 0.3))
 
@@ -31,4 +44,4 @@ class SynonymAugmenter(BaseAugmenter):
                     new_tokens.append(self._choice(synonyms, rng))
                     continue
             new_tokens.append(token)
-        return ''.join(new_tokens)
+        return "".join(new_tokens)

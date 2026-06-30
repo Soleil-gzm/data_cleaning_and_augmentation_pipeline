@@ -11,6 +11,7 @@
    以共享字典形式注入到每个 worker 进程，避免重复加载
 6. 旧配置自动迁移（augment_weights → augmenters 详细格式）
 """
+
 import json
 import random
 import re
@@ -26,10 +27,10 @@ from tqdm import tqdm
 
 from ..core.step import PipelineStep
 from ..augmenters import CompositeAugmenter, AugmenterRegistry, categories as _cats
+from ..augmenters.utils import _ensure_jieba
 
 # 触发所有增强器的注册（import 时完成）
 from ..augmenters import *  # noqa
-
 
 NAME_ALIAS = {
     "similarword": "synonym_replace",
@@ -38,7 +39,9 @@ NAME_ALIAS = {
 }
 
 
-def _migrate_legacy_weights(augment_weights: Optional[Dict[str, float]]) -> Dict[str, Dict[str, Any]]:
+def _migrate_legacy_weights(
+    augment_weights: Optional[Dict[str, float]],
+) -> Dict[str, Dict[str, Any]]:
     """将旧格式 augment_weights 迁移到新格式 augmenters"""
     if not augment_weights:
         return {}
@@ -70,8 +73,18 @@ def _build_augmenters_cfg(
         real = NAME_ALIAS.get(name, name)
         merged = dict(sub)
         if real == "asr_noise" and asr_cache:
-            for key in ("vectors_path", "pinyin_path", "prev_map_path", "model_path", "model_name"):
-                if key not in merged and key in asr_cache and asr_cache[key] is not None:
+            for key in (
+                "vectors_path",
+                "pinyin_path",
+                "prev_map_path",
+                "model_path",
+                "model_name",
+            ):
+                if (
+                    key not in merged
+                    and key in asr_cache
+                    and asr_cache[key] is not None
+                ):
                     merged[key] = asr_cache[key]
         out[real] = merged
     return out
@@ -98,32 +111,49 @@ def _get_enhanceable_indices(messages, target_roles, only_loss_true):
     return indices
 
 
-def _apply_text_to_content(content: str, composite: CompositeAugmenter,
-                            strategy: str, min_steps: int, max_steps: int,
-                            rng: random.Random) -> str:
+def _apply_text_to_content(
+    content: str,
+    composite: CompositeAugmenter,
+    strategy: str,
+    min_steps: int,
+    max_steps: int,
+    rng: random.Random,
+) -> str:
     if not isinstance(content, str) or not content.strip():
         return content
 
-    if '/' in content or '／' in content:
-        parts = re.split(r'[／/]', content)
+    if "/" in content or "／" in content:
+        parts = re.split(r"[／/]", content)
         enhanced_parts = []
         for p in parts:
-            enhanced_parts.append(_apply_single(p, composite, strategy, min_steps, max_steps, rng))
-        return '/'.join(enhanced_parts)
+            enhanced_parts.append(
+                _apply_single(p, composite, strategy, min_steps, max_steps, rng)
+            )
+        return "/".join(enhanced_parts)
     return _apply_single(content, composite, strategy, min_steps, max_steps, rng)
 
 
-def _apply_single(text: str, composite: CompositeAugmenter,
-                  strategy: str, min_steps: int, max_steps: int,
-                  rng: random.Random) -> str:
+def _apply_single(
+    text: str,
+    composite: CompositeAugmenter,
+    strategy: str,
+    min_steps: int,
+    max_steps: int,
+    rng: random.Random,
+) -> str:
     if strategy == "multi_step":
-        return composite.multi_step_apply(text, min_steps=min_steps,
-                                          max_steps=max_steps, rng=rng)
+        return composite.multi_step_apply(
+            text, min_steps=min_steps, max_steps=max_steps, rng=rng
+        )
     return composite.apply(text, rng=rng)
 
 
-def _enhance_dialogue(dialogue: Dict[str, Any], config: Dict[str, Any],
-                      rng: random.Random, composite: CompositeAugmenter) -> Tuple[List[Dict[str, Any]], List[str]]:
+def _enhance_dialogue(
+    dialogue: Dict[str, Any],
+    config: Dict[str, Any],
+    rng: random.Random,
+    composite: CompositeAugmenter,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
     """返回 (变体列表, 每个变体对应的已启用增强方法名列表)"""
     messages = dialogue.get("messages", [])
     if not messages:
@@ -176,7 +206,9 @@ def _enhance_dialogue(dialogue: Dict[str, Any], config: Dict[str, Any],
 # ======================================================================
 # 模块级 Worker
 # ======================================================================
-def _augment_chunk_worker(task: Dict[str, Any]) -> Tuple[List[Dict], List[Dict], List[int], List[List[str]]]:
+def _augment_chunk_worker(
+    task: Dict[str, Any],
+) -> Tuple[List[Dict], List[Dict], List[int], List[List[str]]]:
     """
     Worker 入口：
     - shared_resources 为 Manager.dict()，主进程预加载的模型以 "name" -> bytes / 字典形式注入
@@ -237,9 +269,13 @@ class AugmentStep(PipelineStep):
             final_root = self.context.task_dir / "final_training_data"
             latest_final_dir = self._get_latest_final_dir(final_root)
             if latest_final_dir:
-                input_path = final_root / latest_final_dir / "cleaned_training_data.json"
+                input_path = (
+                    final_root / latest_final_dir / "cleaned_training_data.json"
+                )
             else:
-                self.logger.error("无法确定输入文件，请配置 source_run_id 或 input_file")
+                self.logger.error(
+                    "无法确定输入文件，请配置 source_run_id 或 input_file"
+                )
                 return False
 
         if not input_path.exists():
@@ -251,7 +287,9 @@ class AugmentStep(PipelineStep):
         tag = cfg.get("tag", "augment")
         run_id = f"{timestamp}_augment_{tag}"
 
-        output_base = cfg.get("output_dir") or (self.context.task_dir / "output_augmented_data")
+        output_base = cfg.get("output_dir") or (
+            self.context.task_dir / "output_augmented_data"
+        )
         output_dir = Path(output_base) / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
         self._output_paths = [
@@ -297,7 +335,10 @@ class AugmentStep(PipelineStep):
         model_enabled = False
         for name, sub in augmenters_cfg.items():
             if sub.get("enabled", False) and _cats.requires_model(name):
-                if enabled_categories is not None and _cats.CATEGORY_MODEL not in enabled_categories:
+                if (
+                    enabled_categories is not None
+                    and _cats.CATEGORY_MODEL not in enabled_categories
+                ):
                     continue
                 model_enabled = True
                 break
@@ -316,8 +357,12 @@ class AugmentStep(PipelineStep):
         self.logger.info(f"输出: {output_dir}")
         self.logger.info(f"启用增强器: {list(augmenters_cfg.keys())}")
         self.logger.info(f"启用类别: {enabled_categories or '全部'}")
-        self.logger.info(f"组合策略: {strategy}, min_steps={min_steps}, max_steps={max_steps}")
-        self.logger.info(f"模型增强器: {'启用' if model_enabled else '未启用（将不加载模型）'}")
+        self.logger.info(
+            f"组合策略: {strategy}, min_steps={min_steps}, max_steps={max_steps}"
+        )
+        self.logger.info(
+            f"模型增强器: {'启用' if model_enabled else '未启用（将不加载模型）'}"
+        )
         if max_workers > 1:
             self.logger.info(f"并行模式，进程数: {max_workers}")
 
@@ -327,6 +372,7 @@ class AugmentStep(PipelineStep):
             try:
                 self.logger.info("主进程预加载 ASR 增强资源 ...")
                 from ..augmenters.methods.model.asr_noise import AsrNoiseAugmenter
+
                 preload_cfg = dict(augmenters_cfg["asr_noise"])
                 preload_cfg["enabled"] = True
                 preload_cfg["weight"] = 1.0
@@ -338,10 +384,14 @@ class AugmentStep(PipelineStep):
                 )
                 # 传递可 pickling 的资源（向量/字典）
                 shared_resources["asr_noise.abnormal_words"] = preloader.abnormal_words
-                shared_resources["asr_noise.abnormal_vectors"] = preloader.abnormal_vectors
+                shared_resources["asr_noise.abnormal_vectors"] = (
+                    preloader.abnormal_vectors
+                )
                 shared_resources["asr_noise.word_to_idx"] = preloader.word_to_idx
                 shared_resources["asr_noise.pinyin_dict"] = preloader.pinyin_dict
-                shared_resources["asr_noise.prev_to_abnormals"] = preloader.prev_to_abnormals
+                shared_resources["asr_noise.prev_to_abnormals"] = (
+                    preloader.prev_to_abnormals
+                )
                 shared_resources["asr_noise.config"] = {
                     "prob": preloader.prob,
                     "alpha": preloader.alpha,
@@ -353,6 +403,9 @@ class AugmentStep(PipelineStep):
             except Exception as e:
                 self.logger.error(f"ASR 资源预加载失败: {e}，将在 worker 中按需加载")
 
+        # ---------- 预加载 jieba（避免 worker 子进程重复输出初始化日志刷屏）----------
+        _ensure_jieba()
+
         # ---------- 加载数据 ----------
         with open(input_path, "r", encoding="utf-8") as f:
             original_data = json.load(f)
@@ -363,7 +416,8 @@ class AugmentStep(PipelineStep):
             sample_size = min(100, len(original_data))
             sample = original_data[:sample_size]
             has_enhanceable = sum(
-                1 for d in sample
+                1
+                for d in sample
                 if _get_enhanceable_indices(
                     d.get("messages", []), target_roles, only_loss_true
                 )
@@ -402,7 +456,9 @@ class AugmentStep(PipelineStep):
                 original_data, enhance_config, max_workers, shared_resources
             )
 
-        self.logger.info(f"✅ 增强完成: 原始 {len(all_original)}, 变体 {total_variants}")
+        self.logger.info(
+            f"✅ 增强完成: 原始 {len(all_original)}, 变体 {total_variants}"
+        )
         if failed:
             self.logger.warning(f"失败对话: {len(failed)}")
 
@@ -474,17 +530,19 @@ class AugmentStep(PipelineStep):
     # ========== 并行模式（Manager 共享资源）==========
     def _run_parallel(self, data, config, max_workers, shared_resources):
         chunk_size = max(1, (len(data) + max_workers - 1) // max_workers)
-        chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
+        chunks = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
 
         tasks = []
         for worker_id, chunk in enumerate(chunks):
             worker_seed = config["seed"] + worker_id * 1000 + 1
-            tasks.append({
-                "chunk": chunk,
-                "config": config,
-                "seed": worker_seed,
-                "worker_id": worker_id,
-            })
+            tasks.append(
+                {
+                    "chunk": chunk,
+                    "config": config,
+                    "seed": worker_seed,
+                    "worker_id": worker_id,
+                }
+            )
 
         self.logger.info(f"分 {len(tasks)} 个 chunk，每个约 {chunk_size} 条对话")
 
@@ -506,23 +564,28 @@ class AugmentStep(PipelineStep):
 
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 future_to_task = {
-                    executor.submit(_augment_chunk_worker, task): task
-                    for task in tasks
+                    executor.submit(_augment_chunk_worker, task): task for task in tasks
                 }
 
                 with tqdm(total=len(data), desc="语义增强", unit="dialog") as pbar:
                     for future in as_completed(future_to_task):
                         task = future_to_task[future]
                         try:
-                            orig, vars_list, fail_idx, _meta = future.result(timeout=3600)
+                            orig, vars_list, fail_idx, _meta = future.result(
+                                timeout=3600
+                            )
                             all_original.extend(orig)
                             all_variants.extend(vars_list)
                             total_variants += len(vars_list)
                             failed.extend(fail_idx)
                             pbar.update(len(task["chunk"]))
-                            pbar.set_postfix({"变体": total_variants, "失败": len(failed)})
+                            pbar.set_postfix(
+                                {"变体": total_variants, "失败": len(failed)}
+                            )
                         except Exception as e:
-                            self.logger.error(f"chunk (worker {task['worker_id']}) 失败: {e}")
+                            self.logger.error(
+                                f"chunk (worker {task['worker_id']}) 失败: {e}"
+                            )
                             pbar.update(len(task["chunk"]))
 
         return all_original, all_variants, total_variants, failed, None
@@ -531,7 +594,9 @@ class AugmentStep(PipelineStep):
     def _get_latest_final_dir(self, final_root):
         if not final_root.exists():
             return None
-        dirs = [d for d in final_root.iterdir() if d.is_dir() and d.name.endswith("_final")]
+        dirs = [
+            d for d in final_root.iterdir() if d.is_dir() and d.name.endswith("_final")
+        ]
         if not dirs:
             return None
         dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)

@@ -12,6 +12,7 @@ ASR 噪声增强器（model）
     prob / alpha / max_operations / insert_prob / retry_times
     encoder        : 可注入已预加载的 SentenceTransformer（用于多进程共享）
 """
+
 import pickle
 import re
 import random
@@ -21,15 +22,38 @@ from typing import Optional, List
 
 from ...base import BaseAugmenter
 
-
 AFFIRMATIVE_WORDS = {
-    "是", "有", "能", "可以", "行", "好", "对", "是的", "没错",
-    "肯定", "必须", "需要", "会", "应该",
+    "是",
+    "有",
+    "能",
+    "可以",
+    "行",
+    "好",
+    "对",
+    "是的",
+    "没错",
+    "肯定",
+    "必须",
+    "需要",
+    "会",
+    "应该",
 }
 
 NEGATIVE_WORDS = {
-    "不", "没", "无", "别", "不要", "不用", "不行", "不是", "没有",
-    "不能", "不可以", "否定", "不会", "不该",
+    "不",
+    "没",
+    "无",
+    "别",
+    "不要",
+    "不用",
+    "不行",
+    "不是",
+    "没有",
+    "不能",
+    "不可以",
+    "否定",
+    "不会",
+    "不该",
 }
 
 
@@ -43,7 +67,9 @@ class AsrNoiseAugmenter(BaseAugmenter):
             return None
         path = Path(p)
         if not path.is_absolute():
-            root = Path(__file__).resolve().parents[4]  # pipeline/augmenters/methods/model -> project root
+            root = (
+                Path(__file__).resolve().parents[4]
+            )  # pipeline/augmenters/methods/model -> project root
             path = root / path
         return str(path)
 
@@ -51,7 +77,8 @@ class AsrNoiseAugmenter(BaseAugmenter):
         # 若有主进程注入的共享资源，优先使用（避免重复加载）
         shared = self.config.get("shared_resources")
         if shared and all(
-            shared.get(k) for k in (
+            shared.get(k)
+            for k in (
                 "asr_noise.abnormal_words",
                 "asr_noise.abnormal_vectors",
                 "asr_noise.pinyin_dict",
@@ -68,9 +95,15 @@ class AsrNoiseAugmenter(BaseAugmenter):
             saved_cfg = shared.get("asr_noise.config", {})
             self.prob = float(saved_cfg.get("prob", self.config.get("prob", 0.5)))
             self.alpha = float(saved_cfg.get("alpha", self.config.get("alpha", 0.7)))
-            self.max_operations = int(saved_cfg.get("max_operations", self.config.get("max_operations", 2)))
-            self.insert_prob = float(saved_cfg.get("insert_prob", self.config.get("insert_prob", 0.2)))
-            self.retry_times = int(saved_cfg.get("retry_times", self.config.get("retry_times", 3)))
+            self.max_operations = int(
+                saved_cfg.get("max_operations", self.config.get("max_operations", 2))
+            )
+            self.insert_prob = float(
+                saved_cfg.get("insert_prob", self.config.get("insert_prob", 0.2))
+            )
+            self.retry_times = int(
+                saved_cfg.get("retry_times", self.config.get("retry_times", 3))
+            )
             self.dim = int(saved_cfg.get("dim", self.abnormal_vectors.shape[1]))
 
             # 共享资源仅包含权重/词典，encoder 仍需在子进程内懒加载（可选开启）
@@ -78,7 +111,9 @@ class AsrNoiseAugmenter(BaseAugmenter):
                 try:
                     self._load_encoder(
                         self._resolve(self.config.get("model_path")),
-                        self.config.get("model_name", "paraphrase-multilingual-MiniLM-L12-v2"),
+                        self.config.get(
+                            "model_name", "paraphrase-multilingual-MiniLM-L12-v2"
+                        ),
                     )
                 except Exception as e:
                     self._ready = False
@@ -93,24 +128,26 @@ class AsrNoiseAugmenter(BaseAugmenter):
         pinyin_path = self._resolve(self.config.get("pinyin_path"))
         prev_map_path = self._resolve(self.config.get("prev_map_path"))
         model_path = self._resolve(self.config.get("model_path"))
-        model_name = self.config.get("model_name", "paraphrase-multilingual-MiniLM-L12-v2")
+        model_name = self.config.get(
+            "model_name", "paraphrase-multilingual-MiniLM-L12-v2"
+        )
 
         if vectors_path is None or pinyin_path is None:
             self._ready = False
             self._load_error = "asr_noise 缺少 vectors_path / pinyin_path"
             return
 
-        with open(vectors_path, 'rb') as f:
+        with open(vectors_path, "rb") as f:
             vec_data = pickle.load(f)
-        self.abnormal_words = vec_data['words']
-        self.abnormal_vectors = vec_data['vectors']
+        self.abnormal_words = vec_data["words"]
+        self.abnormal_vectors = vec_data["vectors"]
         self.word_to_idx = {w: i for i, w in enumerate(self.abnormal_words)}
 
-        with open(pinyin_path, 'rb') as f:
+        with open(pinyin_path, "rb") as f:
             self.pinyin_dict = pickle.load(f)
 
         if prev_map_path and Path(prev_map_path).exists():
-            with open(prev_map_path, 'rb') as f:
+            with open(prev_map_path, "rb") as f:
                 self.prev_to_abnormals = pickle.load(f)
         else:
             self.prev_to_abnormals = {}
@@ -149,8 +186,8 @@ class AsrNoiseAugmenter(BaseAugmenter):
 
     # ---------- 工具 ----------
     def _pinyin_similarity(self, w1: str, w2: str) -> float:
-        p1 = self.pinyin_dict.get(w1, '')
-        p2 = self.pinyin_dict.get(w2, '')
+        p1 = self.pinyin_dict.get(w1, "")
+        p2 = self.pinyin_dict.get(w2, "")
         if not p1 or not p2:
             return 0.0
         max_len = max(len(p1), len(p2))
@@ -158,6 +195,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
             return 1.0
         try:
             import Levenshtein  # type: ignore
+
             dist = Levenshtein.distance(p1, p2)
             return 1 - dist / max_len
         except ImportError:
@@ -201,6 +239,19 @@ class AsrNoiseAugmenter(BaseAugmenter):
         return [ab for ab, _ in scores[:top_k]]
 
     # ---------- 核心增强算法 ----------
+    _SKIP_CHARS = set('，。！？、；：""' "（）《》【】…—·\t\r\n")
+
+    def _is_valid_target(self, word: str) -> bool:
+        if not word or not word.strip():
+            return False
+        if len(word) <= 1:
+            return False
+        if any(c in self._SKIP_CHARS for c in word):
+            return False
+        if word.isdigit():
+            return False
+        return True
+
     def _enhance_once(self, sentence: str, rng=None) -> str:
         try:
             import jieba
@@ -216,7 +267,8 @@ class AsrNoiseAugmenter(BaseAugmenter):
         candidate_indices = []
         for i in range(1, len(words)):
             if words[i - 1] in self.prev_to_abnormals:
-                candidate_indices.append(i)
+                if self._is_valid_target(words[i]):
+                    candidate_indices.append(i)
         if not candidate_indices:
             return sentence
 
@@ -237,7 +289,9 @@ class AsrNoiseAugmenter(BaseAugmenter):
             if self._rand(rng) > self.prob:
                 continue
 
-            candidates = self.find_best_abnormals(target_word, prev_word=prev_word, top_k=5)
+            candidates = self.find_best_abnormals(
+                target_word, prev_word=prev_word, top_k=5
+            )
             if not candidates:
                 continue
 
@@ -272,12 +326,14 @@ class AsrNoiseAugmenter(BaseAugmenter):
             return sentence
 
         new_words = words[:]
-        for pos, new_word, is_insert in sorted(operations, key=lambda x: x[0], reverse=True):
+        for pos, new_word, is_insert in sorted(
+            operations, key=lambda x: x[0], reverse=True
+        ):
             if is_insert:
                 new_words.insert(pos, new_word)
             else:
                 new_words[pos] = new_word
-        return ''.join(new_words)
+        return "".join(new_words)
 
     def apply(self, text: str, rng: Optional[random.Random] = None) -> str:
         self.initialize()
@@ -286,10 +342,10 @@ class AsrNoiseAugmenter(BaseAugmenter):
         if not getattr(self, "_ready", False):
             return text
 
-        if '/' in text or '／' in text:
-            parts = re.split(r'[／/]', text)
+        if "/" in text or "／" in text:
+            parts = re.split(r"[／/]", text)
             enhanced = [self._apply_single(p, rng) for p in parts]
-            return '/'.join(enhanced)
+            return "/".join(enhanced)
         return self._apply_single(text, rng)
 
     def _apply_single(self, text: str, rng) -> str:
