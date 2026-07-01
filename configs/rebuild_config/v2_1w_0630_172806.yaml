@@ -7,7 +7,7 @@
 # ===================================================================
 
 # ------------------- 基础任务信息 -------------------
-task_name: "General_1w_0630_172806"          # 任务名称，会作为 intermediate 下的子目录名
+task_name: "General_1w_0701_111950"          # 任务名称，会作为 intermediate 下的子目录名
 resume: true                             # 断点续跑（true=跳过已完成步骤）
 
 # ------------------- 执行器配置（预留并行） -------------------
@@ -74,7 +74,7 @@ steps:
   01_split:
     enabled: true
     # 输入文件：相对于项目根目录的路径（或绝对路径）
-    input_json: "datas/raw_data/0630/general_dialogues_20260630_172806.json"
+    input_json: "datas/raw_data/0701/general_dialogues_20260701_111950.json"
     # 输出目录（默认 {task_dir}/samples）
     output_dir: "{task_dir}/samples"
     stats_dir: "{task_dir}/stats"
@@ -85,7 +85,7 @@ steps:
   # 支持 manual, percentile, equal_count 三种策略
   # ================================================================
   02_bucket:
-    enabled: true
+    enabled: false
     samples_dir: "{task_dir}/samples"        # 输入样本目录
     output_base: "{task_dir}/bucketed"       # 输出桶根目录
     strategy: "manual"                       # 分桶策略：manual | percentile | equal_count
@@ -149,7 +149,7 @@ steps:
   04_finalize:
     enabled: true                        # 暂不启用
     source_run_id: null           # 若为 null，自动查找最新的清洗 run_id
-    original_json: "datas/raw_data/general_dialogues_20260624_100317.json"   # 原始对话（与 01 输入一致）
+    original_json: "datas/raw_data/0701/general_dialogues_20260701_111950.json"   # 原始对话（与 01 输入一致）
     cleaned_root: "{task_dir}/cleaned_jsonl" # 清洗结果根目录
     output_root: "{task_dir}/final_training_data"  # 最终训练数据输出根目录
     source_run_id: null                      # 可选，指定清洗 run_id（目录名），留空则自动取最新
@@ -158,10 +158,10 @@ steps:
   # 步骤05：语义增强（可配置多种增强操作权重）
   # ================================================================
   05_augment:
-    enabled: false                           # 暂不启用（启用时改为 true）
-    max_workers: 32                   # 可覆盖全局
+    enabled: true                           # 暂不启用（启用时改为 true）
+    max_workers: 8                   # 可覆盖全局
     # 输入数据（三选一，优先级：input_file > source_run_id > 自动查找最新 _final）
-    source_run_id: null                     # 例如 "20250624_120000_clean_default_final"
+    source_run_id: intermediate/General_1w_0630_172806/final_training_data/20260701_104335_clean_default_final/cleaned_training_data.json                     # 例如 "20250624_120000_clean_default_final"
     tag: "augment_v1"
     input_file: null                        # 例如 "{task_dir}/final_training_data/latest_final/cleaned_training_data.json"
     # 若都不填，自动查找 final_training_data 下最新的 _final 目录

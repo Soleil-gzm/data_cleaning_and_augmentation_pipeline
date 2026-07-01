@@ -167,7 +167,7 @@ def _enhance_dialogue(
 
     num_variants = config["num_variants_per_dialogue"]
     if config.get("adaptive_variants", False):
-        num_variants = max(1, min(5, len(enhanceable)))
+        num_variants = max(1, min(3, len(enhanceable)))
 
     msg_prob = config.get("message_augment_prob", 1.0)
     strategy = config.get("strategy", "single")

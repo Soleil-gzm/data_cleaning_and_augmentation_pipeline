@@ -5,7 +5,11 @@
 生成多个变体对话，输出：
   1. combined_augmented_xxx.json/jsonl : 原始+变体
   2. variants_only_xxx.json/jsonl     : 仅变体
-支持 --config_json 参数，统一日志，动态路径。
+支持两种配置方式：
+  1) --config <yaml>           ：直接读取 pipeline YAML 配置，使用其中 steps.05_augment 段
+  2) --config_json <json_str>   ：传入 JSON 字符串（兼容旧接口）
+同时支持在 YAML 的 05_augment 段中通过 input_file 指定任意 JSON 输入路径，
+并可用 --input_file 命令行参数覆盖配置中的输入文件。
 支持通过配置中的 augment_weights 控制每种增强操作的相对概率。
 支持 ASR 噪声增强（基于前置词和语义+拼音混合匹配）。
 """
@@ -22,6 +26,34 @@ from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import augment_utils_add as aug_utils
+
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
+
+
+def resolve_path(path_str, project_root, task_dir):
+    """
+    统一的路径解析工具：
+      - 若 path_str 为 None 或空字符串，返回 None
+      - 绝对路径直接返回
+      - 包含 {task_dir} 占位符则替换为 task_dir
+      - 其他相对路径视为相对于 project_root
+    """
+    if path_str is None:
+        return None
+    p = str(path_str).strip()
+    if not p:
+        return None
+    if p.startswith("{task_dir}") or "{task_dir}" in p:
+        p = p.format(task_dir=str(task_dir))
+        return Path(p)
+    pp = Path(p)
+    if pp.is_absolute():
+        return pp
+    return project_root / pp
 
 # ========== 日志配置 ==========
 def setup_logger(task_dir, run_id):
@@ -101,7 +133,7 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
 
     num_variants = config["num_variants_per_dialogue"]
     if config["adaptive_variants"]:
-        num_variants = max(1, min(5, len(enhanceable) // 2))
+        num_variants = max(1, min(3, len(enhanceable) // 2))
 
     aug_kwargs = config["augment_kwargs"]
     msg_prob = config.get("message_augment_prob", 1.0)   # 获取概率
@@ -140,10 +172,11 @@ def enhance_dialogue(original_dialogue, config, rng, logger, dialog_id):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_json", type=str, help="全局配置JSON字符串（优先级最高）")
+    parser.add_argument("--config", type=str, help="Pipeline YAML 配置文件路径（读取其中 steps.05_augment 段）")
+    parser.add_argument("--config_json", type=str, help="全局配置JSON字符串（兼容旧接口，优先级低于 --config）")
     parser.add_argument("--source_run_id", type=str, help="最终训练数据的 run_id")
-    parser.add_argument("--input_file", type=str, help="输入 JSON 文件路径")
-    parser.add_argument("--output_dir", type=str, help="增强输出根目录")
+    parser.add_argument("--input_file", type=str, help="输入 JSON 文件路径（可覆盖配置中的 input_file）")
+    parser.add_argument("--output_dir", type=str, help="增强输出根目录（可覆盖配置中的 output_dir）")
     parser.add_argument("--num_variants", type=int, default=3)
     parser.add_argument("--min_turns", type=int, default=1)
     parser.add_argument("--max_turns", type=int, default=2)
@@ -154,110 +187,38 @@ def main():
     parser.add_argument("--tag", type=str, default="default")
     args = parser.parse_args()
 
+    project_root = Path(__file__).resolve().parent.parent
+
     # ---------- 配置模式 ----------
-    if args.config_json:
+    # 优先级：--config (YAML) > --config_json (JSON 字符串) > 独立模式
+    config = None
+    step_cfg = {}
+
+    if args.config:
+        if not HAS_YAML:
+            print("错误：需要 PyYAML 库来解析 YAML 配置，请先安装: pip install pyyaml")
+            sys.exit(1)
+        config_path = Path(args.config)
+        if not config_path.exists():
+            print(f"错误：配置文件不存在: {config_path}")
+            sys.exit(1)
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        if config is None:
+            print("错误：YAML 配置为空")
+            sys.exit(1)
+        step_cfg = config.get('steps', {}).get('05_augment', {}) or {}
+        task_name = config.get('task_name', 'default_task')
+        intermediate = config.get('paths', {}).get('intermediate', './intermediate')
+        task_dir = project_root / intermediate / task_name
+
+    elif args.config_json:
         config = json.loads(args.config_json)
         task_name = config['task_name']
         base_dir = Path(config['paths']['output']['base_dir'])
         task_dir = base_dir / task_name
-        step_cfg = config.get('steps', {}).get('05_augment', {})
-        
-        source_run_id = step_cfg.get('source_run_id') or args.source_run_id
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        default_output_dir = task_dir / "output_augmented_data" / f"{timestamp}_augment_{step_cfg.get('tag', task_name)}"
-        output_dir_str = step_cfg.get('output_dir')
-        if output_dir_str:
-            output_dir = Path(output_dir_str)
-            if not output_dir.is_absolute():
-                output_dir = task_dir / output_dir
-        else:
-            output_dir = default_output_dir
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        num_variants = step_cfg.get('num_variants', args.num_variants)
-        min_turns = step_cfg.get('min_turns', args.min_turns)
-        max_turns = step_cfg.get('max_turns', args.max_turns)
-        target_roles = step_cfg.get('target_roles', args.target_roles)
-        only_loss_true = step_cfg.get('only_loss_true', args.only_loss_true)
-        adaptive_variants = step_cfg.get('adaptive_variants', args.adaptive_variants)
-        seed = step_cfg.get('seed', args.seed)
-        tag = step_cfg.get('tag', args.tag)
-        
-        # ----- 读取增强操作权重 -----
-        augment_weights = step_cfg.get('augment_weights', None)
-        if augment_weights is not None:
-            augment_weights = {k: float(v) for k, v in augment_weights.items()}
-        else:
-            augment_weights = {}
-        
-        # ----- 新增：读取消息增强概率 -----
-        message_augment_prob = step_cfg.get('message_augment_prob', 1.0)
+        step_cfg = config.get('steps', {}).get('05_augment', {}) or {}
 
-        # ----- 确定输入文件 -----
-        if source_run_id:
-            input_file = task_dir / "final_training_data" / source_run_id / "training_data.json"
-        else:
-            input_file = step_cfg.get('input_file') or (task_dir / "final_training_data" / get_latest_final_run_id(task_dir / "final_training_data") / "cleaned_training_data.json")
-        if not input_file or not Path(input_file).exists():
-            print(f"错误：无法确定有效的输入文件，请提供 source_run_id 或 input_file")
-            sys.exit(1)
-        
-        # ----- 设置日志 -----
-        logger = setup_logger(task_dir, f"{task_name}_augment")
-        logger.info(f"任务名称: {task_name}")
-        logger.info(f"任务目录: {task_dir}")
-        logger.info(f"增强输出目录: {output_dir}")
-        if augment_weights:
-            logger.info(f"增强权重配置: {augment_weights}")
-        else:
-            logger.info("未提供增强权重，将使用均匀分布")
-
-        asr_cache_cfg = step_cfg.get('asr_cache', {})
-        if asr_cache_cfg:
-            # 项目根目录 = base_dir (intermediate) 的父目录
-            project_root = base_dir.parent
-            
-            vectors_path = asr_cache_cfg.get('vectors_path')
-            pinyin_path = asr_cache_cfg.get('pinyin_path')
-            prev_map_path = asr_cache_cfg.get('prev_map_path')
-            model_path = asr_cache_cfg.get('model_path')
-            
-            if vectors_path and not Path(vectors_path).is_absolute():
-                vectors_path = project_root / vectors_path
-            if pinyin_path and not Path(pinyin_path).is_absolute():
-                pinyin_path = project_root / pinyin_path
-            if prev_map_path and not Path(prev_map_path).is_absolute():
-                prev_map_path = project_root / prev_map_path
-            if model_path and not Path(model_path).is_absolute():
-                model_path = project_root / model_path
-                
-            try:
-                from common.asr_noise_augmenter import AsrNoiseAugmenter
-                asr_augmenter = AsrNoiseAugmenter(
-                    vectors_path=vectors_path,
-                    pinyin_path=pinyin_path,
-                    prev_map_path=prev_map_path if prev_map_path and Path(prev_map_path).exists() else None,
-                    model_path=model_path
-                )
-                aug_utils.set_asr_augmenter(asr_augmenter)
-                logger.info(f"ASR 增强器已加载，模型路径: {model_path}")
-                logger.info(f"  异常词数量: {len(asr_augmenter.abnormal_words)}")
-                logger.info(f"  前置词映射大小: {len(asr_augmenter.prev_to_abnormals)}")
-                if len(asr_augmenter.prev_to_abnormals) > 0:
-                    logger.debug(f"  前置词示例: {list(asr_augmenter.prev_to_abnormals.keys())[:10]}")
-                else:
-                    logger.warning("  前置词映射为空！请检查 prev_to_abnormals.pkl 文件是否正确生成。")
-            except Exception as e:
-                logger.warning(f"加载 ASR 增强器失败: {e}，将禁用 asr_noise 增强")
-        else:
-            logger.info("未配置 asr_cache，将禁用 asr_noise 增强")
-
-
-        # ----- 调试：检查 AUGMENT_FUNC_MAP 是否包含 asr_noise -----
-        logger.debug(f"aug_utils.AUGMENT_FUNC_MAP 中的键: {list(aug_utils.AUGMENT_FUNC_MAP.keys())}")
-        if 'asr_noise' not in aug_utils.AUGMENT_FUNC_MAP:
-            logger.warning("警告: aug_utils.AUGMENT_FUNC_MAP 中未找到 'asr_noise'，ASR 增强将不可用！")
-    
     # ---------- 独立模式（不支持权重和 ASR 增强）----------
     else:
         if not args.input_file and not args.source_run_id:
@@ -287,17 +248,159 @@ def main():
         adaptive_variants = args.adaptive_variants
         seed = args.seed
         tag = args.tag
-        augment_weights = None   # 独立模式不支持权重
-        # 独立模式下不加载 ASR 增强器，因为需要配置文件提供参数
+        augment_weights = None
+        message_augment_prob = 1.0
 
+        logger.info("=== 对话语义增强任务开始（独立模式）===")
+        logger.info(f"输入文件: {input_file}")
+        logger.info(f"输出目录: {output_dir}")
+
+        enhance_config = {
+            "num_variants_per_dialogue": num_variants,
+            "min_enhance_turns": min_turns,
+            "max_enhance_turns": max_turns,
+            "target_roles": target_roles,
+            "only_loss_true": only_loss_true,
+            "adaptive_variants": adaptive_variants,
+            "message_augment_prob": message_augment_prob,
+            "augment_kwargs": {
+                "num_variants": 1,
+                "min_steps": 2,
+                "max_steps": 3,
+                "augment_weights": augment_weights
+            }
+        }
+
+        _run_pipeline(input_file, output_dir, logger, enhance_config, args, tag, seed)
+        return
+
+    # ============ 配置模式（YAML 或 JSON 字符串）===========
+    # ----- 读取基础参数 -----
+    source_run_id = step_cfg.get('source_run_id') or args.source_run_id
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    tag = step_cfg.get('tag', args.tag)
+
+    # ----- 确定输出目录 -----
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+        if not output_dir.is_absolute():
+            output_dir = project_root / output_dir
+    else:
+        output_dir = resolve_path(step_cfg.get('output_dir'), project_root, task_dir)
+        if output_dir is None:
+            output_dir = task_dir / "output_augmented_data" / f"{timestamp}_augment_{tag}"
+        else:
+            output_dir = output_dir / f"{timestamp}_augment_{tag}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    num_variants = step_cfg.get('num_variants', args.num_variants)
+    min_turns = step_cfg.get('min_turns', args.min_turns)
+    max_turns = step_cfg.get('max_turns', args.max_turns)
+    target_roles = step_cfg.get('target_roles', args.target_roles)
+    only_loss_true = step_cfg.get('only_loss_true', args.only_loss_true)
+    adaptive_variants = step_cfg.get('adaptive_variants', args.adaptive_variants)
+    seed = step_cfg.get('seed', args.seed)
+
+    # ----- 读取增强操作权重 -----
+    augment_weights = step_cfg.get('augment_weights', None)
+    if augment_weights is not None:
+        augment_weights = {k: float(v) for k, v in augment_weights.items()}
+    else:
+        augment_weights = {}
+
+    # ----- 读取消息增强概率 -----
+    message_augment_prob = step_cfg.get('message_augment_prob', 1.0)
+
+    # ----- 确定输入文件（优先级：命令行 > 配置 input_file > source_run_id > 自动推断）-----
+    input_file = None
+    if args.input_file:
+        input_file = resolve_path(args.input_file, project_root, task_dir)
+    elif step_cfg.get('input_file'):
+        input_file = resolve_path(step_cfg.get('input_file'), project_root, task_dir)
+    elif source_run_id:
+        input_file = task_dir / "final_training_data" / source_run_id / "training_data.json"
+    else:
+        final_root = task_dir / "final_training_data"
+        latest_final_dir = get_latest_final_run_id(final_root)
+        if latest_final_dir:
+            input_file = final_root / latest_final_dir / "cleaned_training_data.json"
+
+    if input_file is None or not Path(input_file).exists():
+        print(f"错误：无法确定有效的输入 JSON 文件，请在 YAML 的 05_augment 段配置 input_file 或 source_run_id，"
+              f"或使用命令行 --input_file 指定。当前解析到: {input_file}")
+        sys.exit(1)
+
+    # ----- 设置日志 -----
+    logger = setup_logger(task_dir, f"{task_name}_augment")
+    logger.info(f"任务名称: {task_name}")
+    logger.info(f"项目根目录: {project_root}")
+    logger.info(f"任务目录: {task_dir}")
+    logger.info(f"输入文件: {input_file}")
+    logger.info(f"增强输出目录: {output_dir}")
+    logger.info(f"增强参数: num_variants={num_variants}, target_roles={target_roles}, "
+                f"only_loss_true={only_loss_true}, seed={seed}")
+    if augment_weights:
+        logger.info(f"增强权重配置: {augment_weights}")
+    else:
+        logger.info("未提供增强权重，将使用均匀分布")
+
+    # ----- 加载 ASR 增强器 -----
+    asr_cache_cfg = step_cfg.get('asr_cache', {})
+    if asr_cache_cfg:
+        vectors_path = resolve_path(asr_cache_cfg.get('vectors_path'), project_root, task_dir)
+        pinyin_path = resolve_path(asr_cache_cfg.get('pinyin_path'), project_root, task_dir)
+        prev_map_path = resolve_path(asr_cache_cfg.get('prev_map_path'), project_root, task_dir)
+        model_path = resolve_path(asr_cache_cfg.get('model_path'), project_root, task_dir)
+
+        try:
+            from common.asr_noise_augmenter import AsrNoiseAugmenter
+            asr_augmenter = AsrNoiseAugmenter(
+                vectors_path=str(vectors_path) if vectors_path else None,
+                pinyin_path=str(pinyin_path) if pinyin_path else None,
+                prev_map_path=str(prev_map_path) if prev_map_path and Path(prev_map_path).exists() else None,
+                model_path=str(model_path) if model_path else None
+            )
+            aug_utils.set_asr_augmenter(asr_augmenter)
+            logger.info(f"ASR 增强器已加载，模型路径: {model_path}")
+            logger.info(f"  异常词数量: {len(asr_augmenter.abnormal_words)}")
+            logger.info(f"  前置词映射大小: {len(asr_augmenter.prev_to_abnormals)}")
+            if len(asr_augmenter.prev_to_abnormals) > 0:
+                logger.debug(f"  前置词示例: {list(asr_augmenter.prev_to_abnormals.keys())[:10]}")
+            else:
+                logger.warning("  前置词映射为空！请检查 prev_to_abnormals.pkl 文件是否正确生成。")
+        except Exception as e:
+            logger.warning(f"加载 ASR 增强器失败: {e}，将禁用 asr_noise 增强")
+    else:
+        logger.info("未配置 asr_cache，将禁用 asr_noise 增强")
+
+    logger.debug(f"aug_utils.AUGMENT_FUNC_MAP 中的键: {list(aug_utils.AUGMENT_FUNC_MAP.keys())}")
+    if 'asr_noise' not in aug_utils.AUGMENT_FUNC_MAP:
+        logger.warning("警告: aug_utils.AUGMENT_FUNC_MAP 中未找到 'asr_noise'，ASR 增强将不可用！")
+
+    enhance_config = {
+        "num_variants_per_dialogue": num_variants,
+        "min_enhance_turns": min_turns,
+        "max_enhance_turns": max_turns,
+        "target_roles": target_roles,
+        "only_loss_true": only_loss_true,
+        "adaptive_variants": adaptive_variants,
+        "message_augment_prob": message_augment_prob,
+        "augment_kwargs": {
+            "num_variants": 1,
+            "min_steps": 2,
+            "max_steps": 3,
+            "augment_weights": augment_weights
+        }
+    }
+
+    _run_pipeline(input_file, output_dir, logger, enhance_config, args, tag, seed)
+
+
+def _run_pipeline(input_file, output_dir, logger, enhance_config, args, tag, seed):
+    """执行增强主流程：加载数据 → 逐对话增强 → 保存结果"""
     rng = random.Random(seed)
 
     logger.info("=== 对话语义增强任务开始 ===")
-    logger.info(f"输入文件: {input_file}")
-    logger.info(f"输出目录: {output_dir}")
-    logger.info(f"增强参数: num_variants={num_variants}, min_turns={min_turns}, max_turns={max_turns}, target_roles={target_roles}, only_loss_true={only_loss_true}, adaptive_variants={adaptive_variants}, seed={seed}")
-    if augment_weights:
-        logger.info(f"使用自定义增强权重: {augment_weights}")
 
     # 加载原始数据
     logger.info("加载原始数据...")
@@ -308,23 +411,6 @@ def main():
         logger.error(f"加载原始数据失败: {e}")
         sys.exit(1)
     logger.info(f"原始对话数量: {len(original_data)}")
-
-    # 增强配置
-    enhance_config = {
-        "num_variants_per_dialogue": num_variants,
-        "min_enhance_turns": min_turns,
-        "max_enhance_turns": max_turns,
-        "target_roles": target_roles,
-        "only_loss_true": only_loss_true,
-        "adaptive_variants": adaptive_variants,
-        "message_augment_prob": message_augment_prob,   # 新增
-        "augment_kwargs": {
-            "num_variants": 1,      # 可拓展：对一条消息生成多少个候选修改文本。但当前实现只用了第一个，因此实际无效果，设为1即可
-            "min_steps": 2,
-            "max_steps": 3,
-            "augment_weights": augment_weights   # 传递权重配置（独立模式下为 None）
-        }
-    }
 
     # 分别收集原始和变体
     all_original = []
@@ -384,7 +470,7 @@ def main():
         "source_file": str(input_file),
         "command_line": " ".join(sys.argv),
         "config": enhance_config,
-        "augment_weights": augment_weights,
+        "augment_weights": enhance_config.get("augment_kwargs", {}).get("augment_weights"),
         "statistics": {
             "original_dialogues": len(original_data),
             "generated_variants": total_variants,

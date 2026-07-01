@@ -1,0 +1,203 @@
+# ===================================================================
+# 数据清洗与增强流水线 V2 配置文件（完全适配重构后代码）
+# 基于原配置模板重构，所有路径均适配新的路径解析规则：
+#   - 相对路径（不以 / 开头，不含 {task_dir}）视为相对于项目根目录（即 run_pipeline.py 所在目录）
+#   - 以 {task_dir} 开头的路径会替换为 intermediate/{task_name}/
+#   - 绝对路径直接使用
+# ===================================================================
+
+# ------------------- 基础任务信息 -------------------
+task_name: "0701_10w_newAug"          # 任务名称，会作为 intermediate 下的子目录名
+resume: true                             # 断点续跑（true=跳过已完成步骤）
+
+# ------------------- 执行器配置（预留并行） -------------------
+executor:
+  # type: parallel                        # 可选：sequential 或 parallel
+  max_workers: 4                          # 全局默认并行数（仅在 type=parallel 时生效）
+
+# ------------------- 路径管理 -------------------
+paths:
+  input:
+    # 原始对话数据目录（用于 00_generate_raw，若禁用该步骤则可忽略）
+    raw_dialogues_dir: "datas/Yangqg_simulation_data"   # 存放 .doc/.docx 的目录，相对于项目根
+    prompt_dir: "datas/cases_random"                    # 存放 case_*.txt 的目录
+  intermediate: "intermediate"            # 所有中间产物的根目录（task_dir = intermediate/task_name）
+  output: "output"                        # 最终输出（预留）
+
+# ------------------- 日志与进度 -------------------
+logging:
+  level: "INFO"                           # 控制台日志级别
+  file_level: "DEBUG"                     # 文件日志级别
+  show_progress: true                     # 是否显示进度条
+  print_tree: false                        # 启动时打印任务目录树
+
+# ------------------- 报告与分析模块 -------------------
+reporting:
+  enabled: true                           # 是否启用报告生成（清洗步骤后自动触发）
+  reporters:                              # 报告器列表（可插拔）
+    - type: json
+      output_dir: "{task_dir}/reports/"
+    - type: csv
+      output_dir: "{task_dir}/reports/"
+    - type: matplotlib                    # 需要 matplotlib 库
+      output_dir: "{task_dir}/reports/plots/"
+      dpi: 150
+
+# ------------------- 步骤执行顺序 -------------------
+# 可按需调整顺序，但需注意依赖关系
+steps_order:
+  - "00_generate_raw"
+  - "01_split"
+  - "02_bucket"
+  - "03_clean"
+  - "04_finalize"
+  - "05_augment"
+  - "06_replace_text"
+
+# ------------------- 各步骤详细配置 -------------------
+steps:
+  # ================================================================
+  # 步骤00：生成原始对话 JSON（从 doc/docx + prompt）
+  # 若您已有 raw_dialogues.json，可设置 enabled: false
+  # ================================================================
+  00_generate_raw:
+    enabled: false                         # 是否启用
+    # 输入输出路径（若未指定，则从 paths.input 和 task_dir 推导）
+    raw_dir: "datas/Yangqg_simulation_data"   # 覆盖 paths.input.raw_dialogues_dir
+    prompt_dir: "datas/cases_random"          # 覆盖 paths.input.prompt_dir
+    output_file: "{task_dir}/raw_dialogues.json"   # 输出到 task_dir
+
+  # ================================================================
+  # 步骤01：拆分为单轮样本 JSONL
+  # 需指定输入 JSON 文件（原始对话）
+  # ================================================================
+  01_split:
+    enabled: true
+    # 输入文件：相对于项目根目录的路径（或绝对路径）
+    input_json: "datas/raw_data/0701/general_dialogues_20260701_142641.json"
+    # 输出目录（默认 {task_dir}/samples）
+    output_dir: "{task_dir}/samples"
+    stats_dir: "{task_dir}/stats"
+    batch_size: 120000                      # 每个 JSONL 包含的最大对话数
+
+  # ================================================================
+  # 步骤02：按轮次分桶
+  # 支持 manual, percentile, equal_count 三种策略
+  # ================================================================
+  02_bucket:
+    enabled: true
+    samples_dir: "{task_dir}/samples"        # 输入样本目录
+    output_base: "{task_dir}/bucketed"       # 输出桶根目录
+    strategy: "manual"                       # 分桶策略：manual | percentile | equal_count
+    # ----- 手动模式配置（strategy=manual 时使用）-----
+    manual_buckets: 
+      - [0, 0]
+      - [1, 1]
+      - [2, 2]
+      - [3, 3]
+      - [4, 4]
+      - [5, 5]
+      - [6, 6]
+      - [7, 7]
+      - [8, 8]
+      - [9, 9]
+      - [10, 10]
+      - [11, 11]
+      - [12, 12]
+      - [13, 13]
+      - [14, 14]
+      - [15, 15]
+      - [16, 16]
+      - [17, 17]
+      - [18, 18]
+      - [19, 19]
+      - [20, 20]
+      - [21, 21]
+      - [22, 52]      # 长对话桶
+    # ----- 自动模式示例（注释掉 manual_buckets，取消下面注释）-----
+    # auto_params:
+    #   percentiles: [0, 25, 50, 75, 90, 95, 100]   # percentile 策略参数
+    #   # 或
+    #   min_bucket_size: 5000                       # equal_count 策略参数
+
+  # ================================================================
+  # 步骤03：调用 Data-Juicer 清洗每个桶
+  # ================================================================
+  03_clean:
+    enabled: true                          # 暂不启用，若启用需确保 configs_dir 存在
+    max_workers: 32                          # 覆盖全局并行数，限制为 2
+    tag: "default"                # 用于生成 run_id 后缀
+    bucketed_root: "{task_dir}/bucketed"    # 分桶输入目录
+    cleaned_root: "{task_dir}/cleaned_jsonl" # 清洗输出根目录
+    trace_root: "{task_dir}/trace_output"    # trace 输出目录
+    configs_dir: "configs/configs_qa"        # 清洗配置文件目录（相对于项目根）
+    tag: "default"                           # 清洗任务标签（用于子目录命名）
+    # 桶名到配置文件的映射（正则匹配）
+    bucket_config_map:
+      - pattern: "bucket_22_52"              # 匹配长对话桶
+        config: "config_bucket_10plus.yaml"
+      - pattern: ".*"                        # 默认匹配所有未匹配的桶
+        config: "overal_config.yaml"
+    # 清洗后自动触发的分析器（在 reporting 启用时生效）
+    attach_analyzers:
+      - "RetentionAnalyzer"
+      - "TurnDistributionAnalyzer"
+
+  # ================================================================
+  # 步骤04：应用清洗结果，生成最终训练数据（标记 loss）
+  # ================================================================
+  04_finalize:
+    enabled: true                        # 暂不启用
+    source_run_id: null           # 若为 null，自动查找最新的清洗 run_id
+    original_json: "datas/raw_data/0701/general_dialogues_20260701_142641.json"   # 原始对话（与 01 输入一致）
+    cleaned_root: "{task_dir}/cleaned_jsonl" # 清洗结果根目录
+    output_root: "{task_dir}/final_training_data"  # 最终训练数据输出根目录
+    source_run_id: null                      # 可选，指定清洗 run_id（目录名），留空则自动取最新
+
+  # ================================================================
+  # 步骤05：语义增强（可配置多种增强操作权重）
+  # ================================================================
+# ===== 全局执行器配置 =====
+  05_augment:
+    enabled: true
+    max_workers: 16
+    num_variants: 2
+    adaptive_variants: true
+    message_augment_prob: 1
+    target_roles: ["user"]
+    only_loss_true: false
+    source_run_id: null
+    tag: "augment_v1"
+    input_file: null
+    # 增强器列表（按需启用）
+    augmenters:
+      synonym_replace:    # 失败
+        enabled: true
+        weight: 1.0
+        prob: 1
+        dict_path: "resources/synonyms.txt"
+      stutter:      # 实现
+        enabled: true
+        weight: 1
+        prob: 1
+      reorder:    # 实现
+        enabled: true
+        weight: 1
+        prob: 1
+      word_repetition:  # 实现
+        enabled: true
+        weight: 1
+        prob: 1
+      insert_filler:  # 实现
+        enabled: true
+        weight: 1
+        prob: 1
+      asr_noise:    # 失败
+        enabled: false
+        weight: 2.0
+        prob: 1
+        device: "cuda:7"  # 使用 GPU 7（可选 cuda:6 或 cuda:7）
+        vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_vectors.pkl"
+        pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_pinyin.pkl"
+        prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/prev_to_abnormals.pkl"
+        model_path: "Models/paraphrase-multilingual-MiniLM-L12-v2"
