@@ -22,4 +22,5 @@ __pycache__
 test/common/__pycache__
 resources/prev_clean
 */__pycache__
+configs/task_config/
 
