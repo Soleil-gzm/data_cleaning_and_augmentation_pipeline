@@ -25,7 +25,7 @@ class BaseAugmenter(ABC):
 
     def initialize(self):
         """延迟加载资源（如模型），在首次调用 apply 前执行"""
-        if not self._initialized or not getattr(self, '_ready', False):
+        if not self._initialized:
             self._load_resources()
             self._initialized = True
 

@@ -7,7 +7,7 @@
 # ===================================================================
 
 # ------------------- 基础任务信息 -------------------
-task_name: "General_10w_aug"          # 任务名称，会作为 intermediate 下的子目录名
+task_name: "0702_3w"          # 任务名称，会作为 intermediate 下的子目录名
 resume: true                             # 断点续跑（true=跳过已完成步骤）
 
 # ------------------- 执行器配置（预留并行） -------------------
@@ -74,7 +74,7 @@ steps:
   01_split:
     enabled: true
     # 输入文件：相对于项目根目录的路径（或绝对路径）
-    input_json: "datas/raw_data/general_dialogues_20260624_111758.json"
+    input_json: "datas/raw_data/0702/general_dialogues_20260702_103457.json"
     # 输出目录（默认 {task_dir}/samples）
     output_dir: "{task_dir}/samples"
     stats_dir: "{task_dir}/stats"
@@ -113,7 +113,7 @@ steps:
       - [19, 19]
       - [20, 20]
       - [21, 21]
-      - [22, 57]      # 长对话桶
+      - [22, 41]      # 长对话桶
     # ----- 自动模式示例（注释掉 manual_buckets，取消下面注释）-----
     # auto_params:
     #   percentiles: [0, 25, 50, 75, 90, 95, 100]   # percentile 策略参数
@@ -134,7 +134,7 @@ steps:
     tag: "default"                           # 清洗任务标签（用于子目录命名）
     # 桶名到配置文件的映射（正则匹配）
     bucket_config_map:
-      - pattern: "bucket_22_57"              # 匹配长对话桶
+      - pattern: "bucket_22_41"              # 匹配长对话桶
         config: "config_bucket_10plus.yaml"
       - pattern: ".*"                        # 默认匹配所有未匹配的桶
         config: "overal_config.yaml"
@@ -149,7 +149,7 @@ steps:
   04_finalize:
     enabled: true                        # 暂不启用
     source_run_id: null           # 若为 null，自动查找最新的清洗 run_id
-    original_json: "datas/raw_data/general_dialogues_20260624_111758.json"   # 原始对话（与 01 输入一致）
+    original_json: "datas/raw_data/0702/general_dialogues_20260702_103457.json"   # 原始对话（与 01 输入一致）
     cleaned_root: "{task_dir}/cleaned_jsonl" # 清洗结果根目录
     output_root: "{task_dir}/final_training_data"  # 最终训练数据输出根目录
     source_run_id: null                      # 可选，指定清洗 run_id（目录名），留空则自动取最新
@@ -157,50 +157,46 @@ steps:
   # ================================================================
   # 步骤05：语义增强（可配置多种增强操作权重）
   # ================================================================
+# ===== 全局执行器配置 =====
   05_augment:
-    enabled: true                           # 暂不启用（启用时改为 true）
-    max_workers: 32                   # 可覆盖全局
-    # 输入数据（三选一，优先级：input_file > source_run_id > 自动查找最新 _final）
-    source_run_id: null                     # 例如 "20250624_120000_clean_default_final"
+    enabled: false
+    max_workers: 4
+    num_variants: 2
+    adaptive_variants: false
+    message_augment_prob: 1
+    target_roles: ["user"]
+    only_loss_true: false
+    source_run_id: null
     tag: "augment_v1"
-    input_file: null                        # 例如 "{task_dir}/final_training_data/latest_final/cleaned_training_data.json"
-    # 若都不填，自动查找 final_training_data 下最新的 _final 目录
-
-    output_dir: "{task_dir}/output_augmented_data"   # 增强输出根目录（自动生成时间戳子目录）
-    num_variants: 1                         # 每个原始对话生成变体数
-    min_turns: 1                            # 每个变体最少增强轮次数
-    max_turns: 2                            # 每个变体最多增强轮次数
-    target_roles: ["user"]                  # 要增强的角色（可指定 "user" 或 "assistant"）
-    only_loss_true: false                   # 是否只增强 loss=True 的消息（仅对 assistant 有意义）
-    adaptive_variants: true                 # 是否根据可增强轮次自动调整变体数量
-    seed: 42                                # 随机种子
-    tag: "asr_noise"                        # 增强任务标签
-    message_augment_prob: 0.7               # 每条消息被增强的概率（0~1）
-
-    # ----- 增强操作权重（相对权重，数值越大被选中概率越高）-----
-    augment_weights:
-      insert_filler: 1
-      stutter: 1
-      reorder: 1
-      homophone: 0
-      random_delete: 1
-      random_entity_replace: 1
-      similarword: 0
-      word_repetition: 2
-      asr_noise: 5.0                         # 若未安装 bert4keras 等，设为 0 可禁用
-
-    # ----- ASR 噪声增强缓存文件（相对项目根目录）-----
-    asr_cache:
-      vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_vectors.pkl"
-      pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_pinyin.pkl"
-      prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/prev_to_abnormals.pkl"
-      model_path: "Models/paraphrase-multilingual-MiniLM-L12-v2"
-
-  # ================================================================
-  # 步骤06：文本替换 + loss 类型转换
-  # ================================================================
-  06_replace_text:
-    enabled: false                          # 暂不启用
-    input_file: null                        # 输入文件，留空则自动查找最新的 combined_augmented_*.json
-    output_file: null                       # 输出路径，自动生成
-    suffix: "_replaced"                     # 输出文件名后缀
+    input_file: null
+    # 增强器列表（按需启用）
+    augmenters:
+      synonym_replace:    # 失败
+        enabled: false
+        weight: 1.0
+        prob: 1
+        dict_path: "resources/synonyms.txt"
+      stutter:      # 实现
+        enabled: false
+        weight: 1
+        prob: 1
+      reorder:    # 实现
+        enabled: false
+        weight: 1
+        prob: 1
+      word_repetition:  # 实现
+        enabled: false
+        weight: 1
+        prob: 1
+      insert_filler:  # 实现
+        enabled: false
+        weight: 1
+        prob: 1
+      asr_noise:    # 失败
+        enabled: true
+        weight: 2.0
+        prob: 1
+        vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_vectors.pkl"
+        pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_pinyin.pkl"
+        prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/prev_to_abnormals.pkl"
+        model_path: "Models/paraphrase-multilingual-MiniLM-L12-v2"

@@ -212,39 +212,25 @@ def _augment_chunk_worker(
     """
     Worker 入口：
     - shared_resources 为 Manager.dict()，主进程预加载的模型以 "name" -> bytes / 字典形式注入
-    - word_to_vec 通过 task dict 直接传递（避免 Manager.dict 序列化 numpy 数组的问题）
     - worker 按 composite_config 构建 CompositeAugmenter
+    - 若某个 augmenter 支持从共享资源恢复，可在 _load_resources 中优先读取
     """
     chunk = task["chunk"]
     config = task["config"]
     seed = task["seed"]
     shared_resources = task.get("shared_resources") or {}
-    word_to_vec = task.get("word_to_vec") or {}
     rng = random.Random(seed)
 
     composite = CompositeAugmenter(config["composite_config"])
 
+    # 将共享资源注入到每个需要它的 augmenter（例如 AsrNoiseAugmenter.encoder）
+    # 通过给每个 augmenter.config 增加 "shared_resources" 字段实现
     if shared_resources:
         for aug in composite.augmenters:
             try:
                 aug.config["shared_resources"] = shared_resources
             except Exception:
                 pass
-
-    # 将预编码向量注入到 AsrNoiseAugmenter 的 config
-    if word_to_vec:
-        for aug in composite.augmenters:
-            if type(aug).__name__ == "AsrNoiseAugmenter":
-                try:
-                    aug.config["asr_noise.word_to_vec"] = word_to_vec
-                except Exception:
-                    pass
-
-    for aug in composite.augmenters:
-        try:
-            aug.initialize()
-        except Exception:
-            pass
 
     original_list = []
     variants_list = []
@@ -366,16 +352,10 @@ class AugmentStep(PipelineStep):
             "multi_retry": cfg.get("multi_retry", 2),
         }
 
-        # 计算实际启用的增强器（enabled=true 且 weight>0）
-        active_augmenters = []
-        for name, sub in augmenters_cfg.items():
-            if isinstance(sub, dict) and sub.get("enabled", False) and float(sub.get("weight", 1.0)) > 0:
-                active_augmenters.append(name)
-
         self.logger.info(f"增强 run_id: {run_id}")
         self.logger.info(f"输入: {input_path}")
         self.logger.info(f"输出: {output_dir}")
-        self.logger.info(f"启用增强器: {active_augmenters or '无'}")
+        self.logger.info(f"启用增强器: {list(augmenters_cfg.keys())}")
         self.logger.info(f"启用类别: {enabled_categories or '全部'}")
         self.logger.info(
             f"组合策略: {strategy}, min_steps={min_steps}, max_steps={max_steps}"
@@ -386,18 +366,8 @@ class AugmentStep(PipelineStep):
         if max_workers > 1:
             self.logger.info(f"并行模式，进程数: {max_workers}")
 
-        # ---------- 预加载 jieba（避免 worker 子进程重复输出初始化日志刷屏）----------
-        _ensure_jieba()
-
-        # ---------- 加载数据 ----------
-        with open(input_path, "r", encoding="utf-8") as f:
-            original_data = json.load(f)
-        self.logger.info(f"原始对话数: {len(original_data)}")
-
         # ---------- 主进程预加载模型资源（共享到 worker）----------
         shared_resources: Dict[str, Any] = {}
-        word_to_vec_dict: Dict[str, Any] = {}  # 单独存储，不经过 Manager.dict()
-        
         if model_enabled and augmenters_cfg.get("asr_noise", {}).get("enabled", False):
             try:
                 self.logger.info("主进程预加载 ASR 增强资源 ...")
@@ -430,34 +400,16 @@ class AugmentStep(PipelineStep):
                     "retry_times": preloader.retry_times,
                     "dim": preloader.dim,
                 }
-                
-                # 预编码用户消息中的词（避免 Worker 重复加载模型）
-                if preloader.encoder:
-                    self.logger.info("主进程预编码用户消息中的词 ...")
-                    import jieba  # 确保 jieba 已导入
-                    user_words = set()
-                    for d in original_data:
-                        for msg in d.get("messages", []):
-                            if msg.get("role") in target_roles:
-                                content = msg.get("content", "")
-                                if content:
-                                    words = jieba.lcut(content)
-                                    for w in words:
-                                        w = w.strip()
-                                        if w:
-                                            user_words.add(w)
-                    
-                    if user_words:
-                        self.logger.info(f"  待编码词数: {len(user_words)}")
-                        word_list = list(user_words)
-                        word_vecs = preloader.encoder.encode(
-                            word_list, show_progress_bar=False
-                        )
-                        # 存储到单独 dict，通过 task 传递（避免 Manager.dict 序列化问题）
-                        word_to_vec_dict = dict(zip(word_list, word_vecs))
-                        self.logger.info(f"  预编码完成: {len(word_list)} 个词")
             except Exception as e:
                 self.logger.error(f"ASR 资源预加载失败: {e}，将在 worker 中按需加载")
+
+        # ---------- 预加载 jieba（避免 worker 子进程重复输出初始化日志刷屏）----------
+        _ensure_jieba()
+
+        # ---------- 加载数据 ----------
+        with open(input_path, "r", encoding="utf-8") as f:
+            original_data = json.load(f)
+        self.logger.info(f"原始对话数: {len(original_data)}")
 
         # 诊断：抽样检查有多少对话有可增强的消息
         if original_data:
@@ -501,7 +453,7 @@ class AugmentStep(PipelineStep):
             )
         else:
             all_original, all_variants, total_variants, failed, _ = self._run_parallel(
-                original_data, enhance_config, max_workers, shared_resources, word_to_vec_dict
+                original_data, enhance_config, max_workers, shared_resources
             )
 
         self.logger.info(
@@ -576,7 +528,7 @@ class AugmentStep(PipelineStep):
         return all_original, all_variants, total_variants, failed, None
 
     # ========== 并行模式（Manager 共享资源）==========
-    def _run_parallel(self, data, config, max_workers, shared_resources, word_to_vec_dict=None):
+    def _run_parallel(self, data, config, max_workers, shared_resources):
         chunk_size = max(1, (len(data) + max_workers - 1) // max_workers)
         chunks = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
 
@@ -589,7 +541,6 @@ class AugmentStep(PipelineStep):
                     "config": config,
                     "seed": worker_seed,
                     "worker_id": worker_id,
-                    "word_to_vec": word_to_vec_dict or {},  # 通过 task 传递
                 }
             )
 

@@ -12,6 +12,11 @@
 并可用 --input_file 命令行参数覆盖配置中的输入文件。
 支持通过配置中的 augment_weights 控制每种增强操作的相对概率。
 支持 ASR 噪声增强（基于前置词和语义+拼音混合匹配）。
+
+用 YAML 但临时换一个 JSON 文件:
+python scripts/05_main_augment_add.py \
+    --config configs/pipeline_config_v2.yaml \
+    --input_file datas/my_custom_data.json
 """
 
 import json
