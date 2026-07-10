@@ -1,0 +1,31 @@
+task_name: "test_adaptive_naming"
+
+global:
+  max_workers: 1
+
+paths:
+  input:
+    raw_dialogues_dir: null
+    prompt_dir: null
+  task_root: "output"
+
+steps_order:
+  - "06_enrich_augment"
+
+steps:
+  06_enrich_augment:
+    enabled: true
+    max_workers: 1
+    num_variants: 3
+    adaptive_variants: true
+    adaptive_max_variants: 5
+    seed: 42
+    target_roles: ["user"]
+    only_loss_true: false
+    strategy: "single"
+    input_file: "datas/raw_data/0703/data-simulation-xiaoying-260703.json"
+    
+    augmenters:
+      insert_filler:
+        enabled: true
+        weight: 1.0
