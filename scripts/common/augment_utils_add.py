@@ -1,6 +1,7 @@
 import os
 import random
 import re
+import time
 import pandas as pd
 import jieba
 from nlpcda import Homophone, RandomDeleteChar, Randomword, Similarword
@@ -241,6 +242,8 @@ def apply_asr_noise(sentence: str) -> str:
     对句子应用 ASR 噪声增强（多位置、替换/插入、前置词匹配）
     增加极性检测，避免肯定/否定词被翻转
     """
+    _total_start = time.time()
+    
     augmenter = get_asr_augmenter()
     if augmenter is None:
         return sentence
@@ -252,19 +255,24 @@ def apply_asr_noise(sentence: str) -> str:
     ALPHA = 0.7
     RETRY_TIMES = 3
 
-    # 定义肯定词和否定词集合（可根据实际情况扩充）
     AFFIRMATIVE_WORDS = {"是", "有", "能", "可以", "行", "好", "对", "是的", "没错", "肯定", "必须", "需要", "会", "应该"}
     NEGATIVE_WORDS = {"不", "没", "无", "别", "不要", "不用", "不行", "不是", "没有", "不能", "不可以", "否定", "不会", "不该"}
 
     def enhance_once(sent):
+        _jieba_start = time.time()
         words = _jieba.lcut(sent)
+        _jieba_time = time.time() - _jieba_start
+        
         if len(words) < 2:
             return sent
 
+        _find_indices_start = time.time()
         candidate_indices = []
         for i in range(1, len(words)):
             if words[i-1] in augmenter.prev_to_abnormals:
                 candidate_indices.append(i)
+        _find_indices_time = time.time() - _find_indices_start
+        
         if not candidate_indices:
             return sent
 
@@ -278,49 +286,47 @@ def apply_asr_noise(sentence: str) -> str:
                     break
 
         operations = []
+        _find_best_total = 0.0
         for pos in selected:
             prev_word = words[pos-1]
             target_word = words[pos]
+            
+            _find_start = time.time()
             candidates = augmenter.find_best_abnormals(
                 target_word,
                 prev_word=prev_word,
                 top_k=5,
                 alpha=ALPHA
             )
+            _find_time = time.time() - _find_start
+            _find_best_total += _find_time
+            
             if not candidates:
                 continue
 
-            # 极性检测：寻找与目标词极性一致的候选词
             chosen = None
-            # 确定目标词的极性（如果既不是肯定也不是否定，则极性为 None）
             target_polarity = None
             if target_word in AFFIRMATIVE_WORDS:
                 target_polarity = "affirmative"
             elif target_word in NEGATIVE_WORDS:
                 target_polarity = "negative"
 
-            # 尝试最多5次选择一个不会翻转极性的候选
             for _ in range(5):
                 cand = _random.choice(candidates)
-                # 如果目标词没有极性要求，直接接受
                 if target_polarity is None:
                     chosen = cand
                     break
-                # 检查候选词的极性
                 if cand in AFFIRMATIVE_WORDS:
                     cand_polarity = "affirmative"
                 elif cand in NEGATIVE_WORDS:
                     cand_polarity = "negative"
                 else:
                     cand_polarity = None
-                # 如果极性一致（或候选无极性），则接受
                 if cand_polarity == target_polarity or cand_polarity is None:
                     chosen = cand
                     break
-                # 否则继续尝试下一个
 
             if chosen is None:
-                # 找不到合适的候选，跳过这个位置
                 continue
 
             if _random.random() < INSERT_PROB:
@@ -337,14 +343,24 @@ def apply_asr_noise(sentence: str) -> str:
                 new_words.insert(pos, new_word)
             else:
                 new_words[pos] = new_word
+        
+        print(f"[ASR TIMING] apply_asr_noise('{sent[:20]}...'):")
+        print(f"  - jieba分词: {_jieba_time:.4f}s")
+        print(f"  - 候选位置识别: {_find_indices_time:.6f}s")
+        print(f"  - find_best_abnormals: {_find_best_total:.4f}s")
+        
         return ''.join(new_words)
 
     original = sentence
     for _ in range(RETRY_TIMES):
         result = enhance_once(original)
         if result != original:
-            return result
-    return original
+            break
+    
+    _total_time = time.time() - _total_start
+    print(f"[ASR TIMING] apply_asr_noise total: {_total_time:.4f}s\n")
+    
+    return result
 
 # ================= 增强函数映射表 =================
 AUGMENT_FUNC_MAP = {

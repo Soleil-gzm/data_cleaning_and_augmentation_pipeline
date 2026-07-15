@@ -496,6 +496,12 @@ def _run_pipeline(input_file, output_dir, logger, enhance_config, args, tag, see
     print(f"  原始对话: {len(original_data)}")
     print(f"  生成变体: {total_variants}")
     print(f"  输出目录: {output_dir}")
+    
+    try:
+        from common.asr_noise_augmenter import print_asr_global_stats
+        print_asr_global_stats()
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()
