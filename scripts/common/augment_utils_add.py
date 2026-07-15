@@ -242,7 +242,7 @@ def apply_asr_noise(sentence: str) -> str:
     对句子应用 ASR 噪声增强（多位置、替换/插入、前置词匹配）
     增加极性检测，避免肯定/否定词被翻转
     """
-    _total_start = time.time()
+    # _total_start = time.time()
     
     augmenter = get_asr_augmenter()
     if augmenter is None:
@@ -259,19 +259,19 @@ def apply_asr_noise(sentence: str) -> str:
     NEGATIVE_WORDS = {"不", "没", "无", "别", "不要", "不用", "不行", "不是", "没有", "不能", "不可以", "否定", "不会", "不该"}
 
     def enhance_once(sent):
-        _jieba_start = time.time()
+        # _jieba_start = time.time()
         words = _jieba.lcut(sent)
-        _jieba_time = time.time() - _jieba_start
+        # _jieba_time = time.time() - _jieba_start
         
         if len(words) < 2:
             return sent
 
-        _find_indices_start = time.time()
+        # _find_indices_start = time.time()
         candidate_indices = []
         for i in range(1, len(words)):
             if words[i-1] in augmenter.prev_to_abnormals:
                 candidate_indices.append(i)
-        _find_indices_time = time.time() - _find_indices_start
+        # _find_indices_time = time.time() - _find_indices_start
         
         if not candidate_indices:
             return sent
@@ -291,15 +291,15 @@ def apply_asr_noise(sentence: str) -> str:
             prev_word = words[pos-1]
             target_word = words[pos]
             
-            _find_start = time.time()
+            # _find_start = time.time()
             candidates = augmenter.find_best_abnormals(
                 target_word,
                 prev_word=prev_word,
                 top_k=5,
                 alpha=ALPHA
             )
-            _find_time = time.time() - _find_start
-            _find_best_total += _find_time
+            # _find_time = time.time() - _find_start
+            # _find_best_total += _find_time
             
             if not candidates:
                 continue
@@ -344,10 +344,10 @@ def apply_asr_noise(sentence: str) -> str:
             else:
                 new_words[pos] = new_word
         
-        print(f"[ASR TIMING] apply_asr_noise('{sent[:20]}...'):")
-        print(f"  - jieba分词: {_jieba_time:.4f}s")
-        print(f"  - 候选位置识别: {_find_indices_time:.6f}s")
-        print(f"  - find_best_abnormals: {_find_best_total:.4f}s")
+        # print(f"[ASR TIMING] apply_asr_noise('{sent[:20]}...'):")
+        # print(f"  - jieba分词: {_jieba_time:.4f}s")
+        # print(f"  - 候选位置识别: {_find_indices_time:.6f}s")
+        # print(f"  - find_best_abnormals: {_find_best_total:.4f}s")
         
         return ''.join(new_words)
 
@@ -357,8 +357,8 @@ def apply_asr_noise(sentence: str) -> str:
         if result != original:
             break
     
-    _total_time = time.time() - _total_start
-    print(f"[ASR TIMING] apply_asr_noise total: {_total_time:.4f}s\n")
+    # _total_time = time.time() - _total_start
+    # print(f"[ASR TIMING] apply_asr_noise total: {_total_time:.4f}s\n")
     
     return result
 
