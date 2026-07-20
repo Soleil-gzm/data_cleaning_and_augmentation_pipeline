@@ -12,6 +12,74 @@ jieba.initialize()
 # ================= 可配置参数 =================
 NUM_VARIANTS = 3                    # 每个原句生成几个变体（默认）
 
+# ================= 全局性能统计 =================
+_augment_perf_stats = {
+    "total_time": 0.0,
+    "calls": {},
+    "elapsed": {}
+}
+
+def _timeit(func, name=None):
+    """
+    高阶包装函数：拦截函数调用，累积执行时间到全局统计字典
+    严格区分"选择逻辑"和"执行逻辑"，只统计 func() 的执行耗时
+    
+    :param func: 被包装的增强函数
+    :param name: 统计键名（建议使用 AUGMENT_FUNC_MAP 中的键名），默认为 func.__name__
+    """
+    func_name = name if name is not None else func.__name__
+    def wrapper(sentence: str) -> str:
+        start = time.time()
+        result = func(sentence)
+        elapsed = time.time() - start
+        
+        _augment_perf_stats["total_time"] += elapsed
+        if func_name not in _augment_perf_stats["calls"]:
+            _augment_perf_stats["calls"][func_name] = 0
+            _augment_perf_stats["elapsed"][func_name] = 0.0
+        _augment_perf_stats["calls"][func_name] += 1
+        _augment_perf_stats["elapsed"][func_name] += elapsed
+        
+        return result
+    return wrapper
+
+def get_augment_perf_stats():
+    """获取当前的性能统计数据"""
+    return _augment_perf_stats.copy()
+
+def reset_augment_perf_stats():
+    """重置性能统计数据"""
+    _augment_perf_stats["total_time"] = 0.0
+    _augment_perf_stats["calls"] = {}
+    _augment_perf_stats["elapsed"] = {}
+
+def print_augment_perf_stats():
+    """打印格式化的性能统计报告"""
+    print("\n" + "="*60)
+    print("增强函数性能统计报告")
+    print("="*60)
+    print(f"总耗时: {_augment_perf_stats['total_time']:.4f}s")
+    
+    if _augment_perf_stats["calls"]:
+        sorted_funcs = sorted(_augment_perf_stats["calls"].items(), 
+                            key=lambda x: _augment_perf_stats["elapsed"][x[0]], 
+                            reverse=True)
+        
+        print(f"\n{'函数名':<20} {'调用次数':>10} {'总耗时(s)':>12} {'平均耗时(ms)':>14} {'占比':>8}")
+        print("-"*60)
+        for func_name, count in sorted_funcs:
+            elapsed = _augment_perf_stats["elapsed"][func_name]
+            avg_ms = (elapsed / count) * 1000 if count > 0 else 0
+            percentage = (elapsed / _augment_perf_stats["total_time"]) * 100 if _augment_perf_stats["total_time"] > 0 else 0
+            print(f"{func_name:<20} {count:>10} {elapsed:>12.4f} {avg_ms:>14.2f} {percentage:>8.1f}%")
+        
+        max_func = sorted_funcs[0][0]
+        max_time = _augment_perf_stats["elapsed"][max_func]
+        max_percentage = (max_time / _augment_perf_stats["total_time"]) * 100 if _augment_perf_stats["total_time"] > 0 else 0
+        print(f"\n⚠️  性能瓶颈: {max_func}（占比 {max_percentage:.1f}%）")
+    
+    print("="*60)
+
 # 语气词库
 FILLERS = ["嗯", "那个", "就是", "呃", "啊"]
 TAILS = ["吧", "啊", "哦", "呗"]
@@ -363,16 +431,18 @@ def apply_asr_noise(sentence: str) -> str:
     return result
 
 # ================= 增强函数映射表 =================
+# 使用 _timeit 包装器自动统计每个增强函数的执行耗时
+# 传入显式 name 参数，使统计键与 MAP 键名一致
 AUGMENT_FUNC_MAP = {
-    "insert_filler": apply_insert_filler,
-    "stutter": apply_stutter,
-    "reorder": apply_reorder,
-    "homophone": apply_homophone,
-    "random_delete": apply_random_delete,
-    "random_entity_replace": apply_random_entity_replace,
-    "similarword": apply_similarword,
-    "word_repetition": apply_word_repetition,
-    "asr_noise": apply_asr_noise,        # 新增强化
+    "insert_filler": _timeit(apply_insert_filler, name="insert_filler"),
+    "stutter": _timeit(apply_stutter, name="stutter"),
+    "reorder": _timeit(apply_reorder, name="reorder"),
+    "homophone": _timeit(apply_homophone, name="homophone"),
+    "random_delete": _timeit(apply_random_delete, name="random_delete"),
+    "random_entity_replace": _timeit(apply_random_entity_replace, name="random_entity_replace"),
+    "similarword": _timeit(apply_similarword, name="similarword"),
+    "word_repetition": _timeit(apply_word_repetition, name="word_repetition"),
+    "asr_noise": _timeit(apply_asr_noise, name="asr_noise"),        # 新增强化
 }
 
 # ================= 多步叠加增强函数 =================
@@ -390,28 +460,29 @@ def multi_step_augment(sentence: str, min_steps=1, max_steps=3, weights=None) ->
     if not isinstance(sentence, str) or len(sentence.strip()) == 0:
         return sentence
 
-    # 构建 population 和对应的权重列表
+    # 构建函数名列表和对应的权重列表（严格区分选择逻辑和执行逻辑）
     if weights is not None:
-        # 只保留权重 > 0 且存在于 AUGMENT_FUNC_MAP 中的操作
         valid_ops = [(name, w) for name, w in weights.items() if w > 0 and name in AUGMENT_FUNC_MAP]
-        if not valid_ops:   # 如果所有权重都是 0 或无效，则回退到所有操作均匀分布
-            population = list(AUGMENT_FUNC_MAP.values())
+        if not valid_ops:
+            func_names = list(AUGMENT_FUNC_MAP.keys())
             weight_list = None
         else:
-            population = [AUGMENT_FUNC_MAP[name] for name, _ in valid_ops]      # 函数对象列表
-            weight_list = [w for _, w in valid_ops]         # 对应的权重列表
+            func_names = [name for name, _ in valid_ops]
+            weight_list = [w for _, w in valid_ops]
     else:
-        population = list(AUGMENT_FUNC_MAP.values())
+        func_names = list(AUGMENT_FUNC_MAP.keys())
         weight_list = None
 
     steps = random.randint(min_steps, max_steps)
     result = sentence
     for _ in range(steps):
+        # 选择逻辑（不计时）
         if weight_list is not None:
-            func = random.choices(population, weights=weight_list, k=1)[0]
+            chosen_name = random.choices(func_names, weights=weight_list, k=1)[0]
         else:
-            func = random.choice(population)
-        result = func(result)
+            chosen_name = random.choice(func_names)
+        # 执行逻辑（由 _timeit 装饰器自动计时）
+        result = AUGMENT_FUNC_MAP[chosen_name](result)
 
     # 如果结果未变且句子不空，重试最多2次
     if result == sentence and len(sentence) > 1:
@@ -419,10 +490,10 @@ def multi_step_augment(sentence: str, min_steps=1, max_steps=3, weights=None) ->
             new_result = sentence
             for _ in range(steps):
                 if weight_list is not None:
-                    func = random.choices(population, weights=weight_list, k=1)[0]
+                    chosen_name = random.choices(func_names, weights=weight_list, k=1)[0]
                 else:
-                    func = random.choice(population)
-                new_result = func(new_result)
+                    chosen_name = random.choice(func_names)
+                new_result = AUGMENT_FUNC_MAP[chosen_name](new_result)
             if new_result != sentence:
                 result = new_result
                 break

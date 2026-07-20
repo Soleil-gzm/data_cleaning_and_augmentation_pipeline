@@ -406,6 +406,8 @@ def _run_pipeline(input_file, output_dir, logger, enhance_config, args, tag, see
     rng = random.Random(seed)
 
     logger.info("=== 对话语义增强任务开始 ===")
+    
+    aug_utils.reset_augment_perf_stats()
 
     # 加载原始数据
     logger.info("加载原始数据...")
@@ -496,6 +498,8 @@ def _run_pipeline(input_file, output_dir, logger, enhance_config, args, tag, see
     print(f"  原始对话: {len(original_data)}")
     print(f"  生成变体: {total_variants}")
     print(f"  输出目录: {output_dir}")
+    
+    aug_utils.print_augment_perf_stats()
     
     try:
         from common.asr_noise_augmenter import print_asr_global_stats
