@@ -13,7 +13,6 @@ from .file_utils import (
     get_file_size_mb,
     get_file_stats,
     find_latest_file,
-    print_directory_tree,
 )
 from .plot_utils import plot_turn_distribution
 from .subprocess_utils import run_subprocess
@@ -32,7 +31,6 @@ __all__ = [
     "get_file_size_mb",
     "get_file_stats",
     "find_latest_file",
-    "print_directory_tree",
     # 绘图
     "plot_turn_distribution",
     # 子进程

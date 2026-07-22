@@ -116,74 +116,6 @@ def find_latest_file(
     return files[0]
 
 
-def print_directory_tree(
-    path: Union[str, Path],
-    max_depth: int = 3,
-    prefix: str = "",
-    exclude_patterns: List[str] = None,
-    show_files: bool = True,
-    _depth: int = 0,
-):
-    """
-    打印目录结构树
-    """
-    if exclude_patterns is None:
-        exclude_patterns = [
-            ".step_*",
-            "__pycache__",
-            "*.pyc",
-            ".DS_Store",
-            "*.log",
-            "temp_*.yaml",
-            "*.pkl",
-            "*.pt",
-            "*.onnx",
-        ]
-
-    def _is_excluded(name: str) -> bool:
-        for pat in exclude_patterns:
-            if fnmatch.fnmatch(name, pat):
-                return True
-        return False
-
-    p = Path(path)
-    if not p.exists():
-        print(f"{prefix}❌ 目录不存在: {p}")
-        return
-
-    if _depth == 0:
-        print(f"📁 {p.name}/")
-
-    if _depth >= max_depth:
-        if any(p.iterdir()):
-            print(f"{prefix}  └── ... (深度限制 {max_depth})")
-        return
-
-    items = sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name))
-    items = [item for item in items if not _is_excluded(item.name)]
-
-    for idx, item in enumerate(items):
-        is_last = idx == len(items) - 1
-        connector = "└── " if is_last else "├── "
-        line = f"{prefix}{connector}"
-
-        if item.is_dir():
-            print(f"{line}📁 {item.name}/")
-            extension = "    " if is_last else "│   "
-            print_directory_tree(
-                item,
-                max_depth,
-                prefix + extension,
-                exclude_patterns,
-                show_files,
-                _depth + 1,
-            )
-        else:
-            if show_files:
-                size = get_file_size_mb(item)
-                print(f"{line}📄 {item.name} ({size:.2f} MB)")
-
-
 # 公共导出列表
 __all__ = [
     "read_json",
@@ -195,5 +127,4 @@ __all__ = [
     "get_file_size_mb",
     "get_file_stats",
     "find_latest_file",
-    "print_directory_tree",
 ]

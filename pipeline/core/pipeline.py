@@ -44,9 +44,6 @@ class Pipeline:
         self.context.set_logger(logger)
         self.logger = logger
 
-        # 打印任务目录树
-        self.context.print_task_tree()
-
         # 步骤执行顺序
         self.steps_order = self.config.get("steps_order", [])
         if not self.steps_order:

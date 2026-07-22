@@ -51,5 +51,4 @@ class ConfigManager:
             "resume": self._resume,
             "max_workers": self._config.get("executor", {}).get("max_workers", 1),
             "show_progress": self._config.get("logging", {}).get("show_progress", True),
-            "print_tree": self._config.get("logging", {}).get("print_tree", True),
         }

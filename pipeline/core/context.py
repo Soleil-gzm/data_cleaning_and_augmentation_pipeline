@@ -12,7 +12,7 @@ import logging
 from .config_manager import ConfigManager
 from .path_resolver import PathResolver
 from .state_tracker import StateTracker
-from ..utils.file_utils import get_file_stats, print_directory_tree
+from ..utils.file_utils import get_file_stats
 from ..utils.progress import set_progress_global
 
 
@@ -130,13 +130,3 @@ class PipelineContext:
             }
         )
 
-    def print_task_tree(self):
-        if not self._config_manager.config.get("logging", {}).get("print_tree", True):
-            return
-        if self.logger:
-            self.logger.info(f"任务目录结构 ({self.task_dir}):")
-        print_directory_tree(
-            self.task_dir,
-            max_depth=4,
-            exclude_patterns=[".step_*", "__pycache__", "*.pyc", ".DS_Store", "*.log"],
-        )

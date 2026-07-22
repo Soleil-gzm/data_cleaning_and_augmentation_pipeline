@@ -42,7 +42,6 @@ logging:
   level: "INFO"                   # 控制台日志级别：DEBUG | INFO | WARNING | ERROR
   file_level: "DEBUG"             # 文件日志级别（更详细）
   show_progress: true             # 是否显示 tqdm 进度条
-  print_tree: false                # 启动时打印任务目录树
 
 
 # ------------------- 报告与分析模块 -------------------
