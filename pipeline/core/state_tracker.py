@@ -33,22 +33,3 @@ class StateTracker:
         """标记步骤为已完成"""
         flag_path = self._task_dir / f".step_{step_name}_done"
         flag_path.touch()
-
-    def clear_step_done(self, step_name: str):
-        """清除步骤完成标记"""
-        flag_path = self._task_dir / f".step_{step_name}_done"
-        if flag_path.exists():
-            flag_path.unlink()
-
-    def clear_all_done(self):
-        """清除所有步骤完成标记"""
-        for flag_file in self._task_dir.glob(".step_*_done"):
-            flag_file.unlink()
-
-    def get_completed_steps(self) -> list:
-        """获取所有已完成的步骤名"""
-        completed = []
-        for flag_file in self._task_dir.glob(".step_*_done"):
-            step_name = flag_file.name.replace(".step_", "").replace("_done", "")
-            completed.append(step_name)
-        return completed

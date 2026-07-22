@@ -27,11 +27,11 @@ from typing import List, Tuple, Dict, Any, Optional
 from tqdm import tqdm
 
 from ..core.step import PipelineStep
-from ..augmenters import CompositeAugmenter, AugmenterRegistry, categories as _cats
+from ..augmenters import CompositeAugmenter, AugmenterRegistry
+from ..augmenters.categories import requires_model, CATEGORY_MODEL
 from ..augmenters.utils import _ensure_jieba
 
-# 触发所有增强器的注册（import 时完成）
-from ..augmenters import *  # noqa
+from .. import augmenters  # 触发所有增强器的注册（import 时完成）
 
 NAME_ALIAS = {
     "similarword": "synonym_replace",
@@ -285,10 +285,10 @@ class AugmentStep(PipelineStep):
         # 模型类增强器是否被启用
         model_enabled = False
         for name, sub in augmenters_cfg.items():
-            if sub.get("enabled", False) and _cats.requires_model(name):
+            if sub.get("enabled", False) and requires_model(name):
                 if (
                     enabled_categories is not None
-                    and _cats.CATEGORY_MODEL not in enabled_categories
+                    and CATEGORY_MODEL not in enabled_categories
                 ):
                     continue
                 model_enabled = True

@@ -3,10 +3,9 @@
 """
 
 import sys
-from typing import Iterable, Optional, Any, Callable
+from typing import Iterable, Optional
 from tqdm import tqdm as _tqdm
 
-# 全局开关，由上下文注入
 _SHOW_PROGRESS = True
 
 
@@ -33,19 +32,3 @@ def get_progress_bar(
         return iterable
 
     return _tqdm(iterable, desc=desc, unit=unit, total=total, file=sys.stdout, **kwargs)
-
-
-def progress_wrapper(func: Callable, desc: str, show: Optional[bool] = None):
-    """
-    装饰器/包装器：为函数调用显示单次进度（适用于长时间运行的单任务）
-    """
-    if show is None:
-        show = _SHOW_PROGRESS
-
-    if not show:
-        return func()
-
-    with _tqdm(total=1, desc=desc, unit="task", file=sys.stdout) as pbar:
-        result = func()
-        pbar.update(1)
-        return result

@@ -16,6 +16,7 @@ from tqdm import tqdm
 from ..core.step import PipelineStep
 from ..analyzers.registry import AnalyzerRegistry
 from ..reporters.registry import ReporterRegistry
+from ..utils.file_utils import count_lines
 
 
 class CleanStep(PipelineStep):
@@ -245,7 +246,7 @@ class CleanStep(PipelineStep):
         trace_dir.mkdir(parents=True, exist_ok=True)
 
         # 统计输入文件信息
-        input_cnt = CleanStep._count_lines(input_file)
+        input_cnt = count_lines(input_file)
         input_dist = CleanStep._collect_turn_dist(input_file)
 
         # 生成临时配置文件
@@ -301,7 +302,7 @@ class CleanStep(PipelineStep):
                 return None
 
             # 统计输出
-            output_cnt = CleanStep._count_lines(output_file)
+            output_cnt = count_lines(output_file)
             output_dist = CleanStep._collect_turn_dist(output_file)
 
             stats = {
@@ -326,13 +327,6 @@ class CleanStep(PipelineStep):
                     pass
 
     # ================== 辅助静态方法 ==================
-    @staticmethod
-    def _count_lines(file_path):
-        if not file_path.exists():
-            return 0
-        with open(file_path, "r", encoding="utf-8") as f:
-            return sum(1 for _ in f)
-
     @staticmethod
     def _collect_turn_dist(file_path):
         from collections import defaultdict

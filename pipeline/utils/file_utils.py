@@ -1,13 +1,10 @@
 """
-文件操作工具：JSON/JSONL 读写、统计、目录树打印、查找最新文件
+文件操作工具：JSON/JSONL 读写、统计、查找最新文件
 """
 
 import json
-import os
-import fnmatch
 from pathlib import Path
 from typing import Any, List, Dict, Optional, Union
-import shutil
 
 
 def read_json(file_path: Union[str, Path]) -> Any:
@@ -50,10 +47,6 @@ def count_lines(file_path: Union[str, Path]) -> int:
         return 0
     with open(file_path, "r", encoding="utf-8") as f:
         return sum(1 for _ in f)
-
-
-# 别名，兼容旧导入
-count_jsonl_lines = count_lines
 
 
 def get_file_size_mb(file_path: Union[str, Path]) -> float:
@@ -116,14 +109,12 @@ def find_latest_file(
     return files[0]
 
 
-# 公共导出列表
 __all__ = [
     "read_json",
     "write_json",
     "read_jsonl",
     "write_jsonl",
     "count_lines",
-    "count_jsonl_lines",
     "get_file_size_mb",
     "get_file_stats",
     "find_latest_file",

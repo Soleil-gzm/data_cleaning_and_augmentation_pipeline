@@ -13,7 +13,6 @@
 import json
 import shutil
 from pathlib import Path
-from collections import defaultdict
 
 from ..core.step import PipelineStep
 

@@ -4,7 +4,6 @@
 职责：
 - 统一管理配置字典
 - 提供步骤配置查询接口
-- 提供全局配置查询接口
 - 提供步骤启用状态判断
 
 使用示例：
@@ -43,12 +42,3 @@ class ConfigManager:
         """判断步骤是否启用"""
         step_cfg = self.get_step_config(step_name)
         return step_cfg.get("enabled", True)
-
-    def get_global_config(self) -> Dict[str, Any]:
-        """获取全局配置"""
-        return {
-            "task_name": self._task_name,
-            "resume": self._resume,
-            "max_workers": self._config.get("executor", {}).get("max_workers", 1),
-            "show_progress": self._config.get("logging", {}).get("show_progress", True),
-        }
