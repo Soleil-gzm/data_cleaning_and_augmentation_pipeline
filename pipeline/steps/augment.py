@@ -1,26 +1,27 @@
 """
-05_augment：语义增强（增强器架构 V2）
-====================================
+05_augment：语义增强
 
-核心特性：
-1. 按 category 管理增强器（lexical / order / model）
-2. 每个增强方法有独立 enabled 开关 + weight 比例 + 专属参数
-3. single / multi_step 两种组合策略，均带空变体 fallback
-4. 支持 enabled_categories 限制启用的类别（未启用的类别不会加载模型）
-5. model 类增强器支持主进程预加载后通过 multiprocessing.Manager
-   以共享字典形式注入到每个 worker 进程，避免重复加载
-6. 旧配置自动迁移（augment_weights → augmenters 详细格式）
+功能描述：
+  - 对对话数据中的消息进行语义增强，生成变体
+  - 支持多种增强方法（词法替换、语序重排、模型增强等）
+  - 当前仅支持串行执行模式
+
+增强方法类别：
+  - lexical（词法替换类）：insert_filler, stutter, homophone, synonym_replace,
+                           random_delete, random_entity_replace, word_repetition
+  - order（语序重排类）：reorder
+  - model（模型类）：asr_noise（需要预加载模型）
+
+配置方式：
+  通过 augmenters 配置项启用/禁用各增强器，并设置权重和参数
 """
 
 import json
 import random
 import re
-import logging
 from copy import deepcopy
 from pathlib import Path
 from datetime import datetime
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from multiprocessing import Manager
 from typing import List, Tuple, Dict, Any, Optional
 
 from tqdm import tqdm
@@ -91,6 +92,7 @@ def _build_augmenters_cfg(
 
 
 def _get_enhanceable_indices(messages, target_roles, only_loss_true):
+    """获取可增强消息的索引列表"""
     indices = []
     for idx, msg in enumerate(messages):
         role = msg.get("role")
@@ -119,6 +121,7 @@ def _apply_text_to_content(
     max_steps: int,
     rng: random.Random,
 ) -> str:
+    """对文本内容应用增强（处理斜杠分隔的多部分内容）"""
     if not isinstance(content, str) or not content.strip():
         return content
 
@@ -141,6 +144,7 @@ def _apply_single(
     max_steps: int,
     rng: random.Random,
 ) -> str:
+    """对单段文本应用增强策略"""
     if strategy == "multi_step":
         return composite.multi_step_apply(
             text, min_steps=min_steps, max_steps=max_steps, rng=rng
@@ -154,7 +158,7 @@ def _enhance_dialogue(
     rng: random.Random,
     composite: CompositeAugmenter,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """返回 (变体列表, 每个变体对应的已启用增强方法名列表)"""
+    """对单个对话进行增强，返回 (变体列表, 每个变体对应的已启用增强方法名列表)"""
     messages = dialogue.get("messages", [])
     if not messages:
         return [], []
@@ -203,55 +207,6 @@ def _enhance_dialogue(
     return variants, variant_meta
 
 
-# ======================================================================
-# 模块级 Worker
-# ======================================================================
-def _augment_chunk_worker(
-    task: Dict[str, Any],
-) -> Tuple[List[Dict], List[Dict], List[int], List[List[str]]]:
-    """
-    Worker 入口：
-    - shared_resources 为 Manager.dict()，主进程预加载的模型以 "name" -> bytes / 字典形式注入
-    - worker 按 composite_config 构建 CompositeAugmenter
-    - 若某个 augmenter 支持从共享资源恢复，可在 _load_resources 中优先读取
-    """
-    chunk = task["chunk"]
-    config = task["config"]
-    seed = task["seed"]
-    shared_resources = task.get("shared_resources") or {}
-    rng = random.Random(seed)
-
-    composite = CompositeAugmenter(config["composite_config"])
-
-    # 将共享资源注入到每个需要它的 augmenter（例如 AsrNoiseAugmenter.encoder）
-    # 通过给每个 augmenter.config 增加 "shared_resources" 字段实现
-    if shared_resources:
-        for aug in composite.augmenters:
-            try:
-                aug.config["shared_resources"] = shared_resources
-            except Exception:
-                pass
-
-    original_list = []
-    variants_list = []
-    failed_indices = []
-    meta_list = []
-
-    for idx, dialogue in enumerate(chunk):
-        original_list.append(dialogue)
-        try:
-            vars_out, metas = _enhance_dialogue(dialogue, config, rng, composite)
-            variants_list.extend(vars_out)
-            meta_list.extend(metas)
-        except Exception:
-            failed_indices.append(idx)
-
-    return original_list, variants_list, failed_indices, meta_list
-
-
-# ======================================================================
-# Pipeline 步骤
-# ======================================================================
 class AugmentStep(PipelineStep):
     def run(self) -> bool:
         cfg = self.context.get_step_config("05_augment")
@@ -300,10 +255,6 @@ class AugmentStep(PipelineStep):
             output_dir / "run_metadata.json",
         ]
         self._input_paths = [input_path]
-
-        # ---------- 并行 ----------
-        global_workers = self.context.config.get("executor", {}).get("max_workers", 1)
-        max_workers = cfg.get("max_workers", global_workers)
 
         # ---------- 读取配置 ----------
         num_variants = cfg.get("num_variants", 3)
@@ -363,47 +314,8 @@ class AugmentStep(PipelineStep):
         self.logger.info(
             f"模型增强器: {'启用' if model_enabled else '未启用（将不加载模型）'}"
         )
-        if max_workers > 1:
-            self.logger.info(f"并行模式，进程数: {max_workers}")
 
-        # ---------- 主进程预加载模型资源（共享到 worker）----------
-        shared_resources: Dict[str, Any] = {}
-        if model_enabled and augmenters_cfg.get("asr_noise", {}).get("enabled", False):
-            try:
-                self.logger.info("主进程预加载 ASR 增强资源 ...")
-                from ..augmenters.methods.model.asr_noise import AsrNoiseAugmenter
-
-                preload_cfg = dict(augmenters_cfg["asr_noise"])
-                preload_cfg["enabled"] = True
-                preload_cfg["weight"] = 1.0
-                preloader = AsrNoiseAugmenter(preload_cfg)
-                preloader.initialize()
-                self.logger.info(
-                    f"  ASR 资源加载完成: abnormal_words={len(preloader.abnormal_words)}, "
-                    f"prev_to_abnormals={len(preloader.prev_to_abnormals)}"
-                )
-                # 传递可 pickling 的资源（向量/字典）
-                shared_resources["asr_noise.abnormal_words"] = preloader.abnormal_words
-                shared_resources["asr_noise.abnormal_vectors"] = (
-                    preloader.abnormal_vectors
-                )
-                shared_resources["asr_noise.word_to_idx"] = preloader.word_to_idx
-                shared_resources["asr_noise.pinyin_dict"] = preloader.pinyin_dict
-                shared_resources["asr_noise.prev_to_abnormals"] = (
-                    preloader.prev_to_abnormals
-                )
-                shared_resources["asr_noise.config"] = {
-                    "prob": preloader.prob,
-                    "alpha": preloader.alpha,
-                    "max_operations": preloader.max_operations,
-                    "insert_prob": preloader.insert_prob,
-                    "retry_times": preloader.retry_times,
-                    "dim": preloader.dim,
-                }
-            except Exception as e:
-                self.logger.error(f"ASR 资源预加载失败: {e}，将在 worker 中按需加载")
-
-        # ---------- 预加载 jieba（避免 worker 子进程重复输出初始化日志刷屏）----------
+        # ---------- 预加载 jieba ----------
         _ensure_jieba()
 
         # ---------- 加载数据 ----------
@@ -446,15 +358,10 @@ class AugmentStep(PipelineStep):
             "seed": seed,
         }
 
-        # ---------- 执行 ----------
-        if max_workers <= 1:
-            all_original, all_variants, total_variants, failed, _ = self._run_serial(
-                original_data, enhance_config, shared_resources
-            )
-        else:
-            all_original, all_variants, total_variants, failed, _ = self._run_parallel(
-                original_data, enhance_config, max_workers, shared_resources
-            )
+        # ---------- 串行执行增强 ----------
+        all_original, all_variants, total_variants, failed = self._run_serial(
+            original_data, enhance_config
+        )
 
         self.logger.info(
             f"✅ 增强完成: 原始 {len(all_original)}, 变体 {total_variants}"
@@ -500,8 +407,8 @@ class AugmentStep(PipelineStep):
         self.logger.info(f"增强完成，结果保存在: {output_dir}")
         return True
 
-    # ========== 串行模式 ==========
-    def _run_serial(self, data, config, shared_resources):
+    def _run_serial(self, data, config):
+        """串行执行增强"""
         all_original = []
         all_variants = []
         total_variants = 0
@@ -509,14 +416,8 @@ class AugmentStep(PipelineStep):
         rng = random.Random(config["seed"])
 
         composite = CompositeAugmenter(config["composite_config"])
-        if shared_resources:
-            for aug in composite.augmenters:
-                try:
-                    aug.config["shared_resources"] = shared_resources
-                except Exception:
-                    pass
 
-        for idx, dialogue in enumerate(data):
+        for idx, dialogue in enumerate(tqdm(data, desc="语义增强", unit="dialog")):
             all_original.append(dialogue)
             try:
                 variants, _ = _enhance_dialogue(dialogue, config, rng, composite)
@@ -525,73 +426,10 @@ class AugmentStep(PipelineStep):
             except Exception as e:
                 self.logger.error(f"对话 {idx} 增强失败: {e}")
                 failed.append(idx)
-        return all_original, all_variants, total_variants, failed, None
+        return all_original, all_variants, total_variants, failed
 
-    # ========== 并行模式（Manager 共享资源）==========
-    def _run_parallel(self, data, config, max_workers, shared_resources):
-        chunk_size = max(1, (len(data) + max_workers - 1) // max_workers)
-        chunks = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
-
-        tasks = []
-        for worker_id, chunk in enumerate(chunks):
-            worker_seed = config["seed"] + worker_id * 1000 + 1
-            tasks.append(
-                {
-                    "chunk": chunk,
-                    "config": config,
-                    "seed": worker_seed,
-                    "worker_id": worker_id,
-                }
-            )
-
-        self.logger.info(f"分 {len(tasks)} 个 chunk，每个约 {chunk_size} 条对话")
-
-        all_original = []
-        all_variants = []
-        total_variants = 0
-        failed = []
-
-        with Manager() as manager:
-            shared = manager.dict()
-            for k, v in (shared_resources or {}).items():
-                try:
-                    shared[k] = v
-                except Exception as e:
-                    self.logger.warning(f"共享资源 {k} 注入失败: {e}")
-
-            for task in tasks:
-                task["shared_resources"] = shared
-
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                future_to_task = {
-                    executor.submit(_augment_chunk_worker, task): task for task in tasks
-                }
-
-                with tqdm(total=len(data), desc="语义增强", unit="dialog") as pbar:
-                    for future in as_completed(future_to_task):
-                        task = future_to_task[future]
-                        try:
-                            orig, vars_list, fail_idx, _meta = future.result(
-                                timeout=3600
-                            )
-                            all_original.extend(orig)
-                            all_variants.extend(vars_list)
-                            total_variants += len(vars_list)
-                            failed.extend(fail_idx)
-                            pbar.update(len(task["chunk"]))
-                            pbar.set_postfix(
-                                {"变体": total_variants, "失败": len(failed)}
-                            )
-                        except Exception as e:
-                            self.logger.error(
-                                f"chunk (worker {task['worker_id']}) 失败: {e}"
-                            )
-                            pbar.update(len(task["chunk"]))
-
-        return all_original, all_variants, total_variants, failed, None
-
-    # ========== 辅助 ==========
     def _get_latest_final_dir(self, final_root):
+        """获取最新的 final_training_data 目录"""
         if not final_root.exists():
             return None
         dirs = [
