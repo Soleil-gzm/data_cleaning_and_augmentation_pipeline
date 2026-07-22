@@ -263,10 +263,10 @@ class AugmentStep(PipelineStep):
         if input_file:
             input_path = self.context.resolve_path(input_file)
         elif source_run_id:
-            final_root = self.context.task_dir / "final_training_data"
+            final_root = self.context.resolve_path("{task_dir}/final_training_data")
             input_path = final_root / source_run_id / "cleaned_training_data.json"
         else:
-            final_root = self.context.task_dir / "final_training_data"
+            final_root = self.context.resolve_path("{task_dir}/final_training_data")
             latest_final_dir = self._get_latest_final_dir(final_root)
             if latest_final_dir:
                 input_path = (
@@ -287,10 +287,10 @@ class AugmentStep(PipelineStep):
         tag = cfg.get("tag", "augment")
         run_id = f"{timestamp}_augment_{tag}"
 
-        output_base = cfg.get("output_dir") or (
-            self.context.task_dir / "output_augmented_data"
+        output_base = self.context.resolve_path(
+            cfg.get("output_dir") or "{task_dir}/output_augmented_data"
         )
-        output_dir = Path(output_base) / run_id
+        output_dir = output_base / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
         self._output_paths = [
             output_dir / f"combined_augmented_{timestamp}.json",

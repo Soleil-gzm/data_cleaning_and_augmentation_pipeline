@@ -14,20 +14,16 @@ from ..utils.file_utils import find_latest_file
 class FinalizeStep(PipelineStep):
     def run(self) -> bool:
         cfg = self.context.get_step_config("04_finalize")
-        original_json = cfg.get("original_json") or (
-            self.context.task_dir / "raw_dialogues.json"
+        original_json = self.context.resolve_path(
+            cfg.get("original_json") or "{task_dir}/raw_dialogues.json"
         )
-        cleaned_root = cfg.get("cleaned_root") or (
-            self.context.task_dir / "cleaned_jsonl"
+        cleaned_root = self.context.resolve_path(
+            cfg.get("cleaned_root") or "{task_dir}/cleaned_jsonl"
         )
-        output_root = cfg.get("output_root") or (
-            self.context.task_dir / "final_training_data"
+        output_root = self.context.resolve_path(
+            cfg.get("output_root") or "{task_dir}/final_training_data"
         )
-        source_run_id = cfg.get("source_run_id")  # 可指定清洗的 run_id
-
-        original_json = Path(original_json)
-        cleaned_root = Path(cleaned_root)
-        output_root = Path(output_root)
+        source_run_id = cfg.get("source_run_id")
 
         if not original_json.exists():
             self.logger.error(f"原始对话不存在: {original_json}")

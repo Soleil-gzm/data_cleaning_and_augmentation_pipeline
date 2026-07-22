@@ -1,5 +1,5 @@
 """
-流水线上下文：管理配置、路径、日志、断点、IO审计
+流水线上下文：管理配置、路径、日志、断点
 """
 
 import json
@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, List
 import logging
 
+from .path_resolver import PathResolver
 from ..utils.file_utils import get_file_stats, print_directory_tree
 from ..utils.progress import set_progress_global
 
@@ -15,17 +16,11 @@ from ..utils.progress import set_progress_global
 class PipelineContext:
     def __init__(self, config: Dict[str, Any]):
         self._config = config
-        self._task_name = config.get("task_name", "default_task")
-        self._intermediate_root = Path(
-            config.get("paths", {}).get("intermediate", "./intermediate")
-        )
-        self._output_root = Path(config.get("paths", {}).get("output", "./output"))
-        self._task_dir = self._intermediate_root / self._task_name
+        self._resolver = PathResolver(config)
         self._resume = config.get("resume", False)
         self._logger = None
-        self._step_io_history = []  # 记录每步IO
+        self._step_io_history = []
 
-        # 进度条全局开关
         show_progress = config.get("logging", {}).get("show_progress", True)
         set_progress_global(show_progress)
 
@@ -35,19 +30,19 @@ class PipelineContext:
 
     @property
     def task_name(self) -> str:
-        return self._task_name
+        return self._resolver.task_name
 
     @property
     def task_dir(self) -> Path:
-        return self._task_dir
+        return self._resolver.task_dir
 
     @property
     def intermediate_root(self) -> Path:
-        return self._intermediate_root
+        return self._resolver.intermediate_root
 
     @property
     def output_root(self) -> Path:
-        return self._output_root
+        return self._resolver.output_root
 
     @property
     def resume(self) -> bool:
@@ -84,38 +79,20 @@ class PipelineContext:
             flag_path.unlink()
 
     def resolve_path(self, path_str: str) -> Path:
-        """
-        解析路径：
-        - 若以 '/' 开头或包含驱动器（Windows），视为绝对路径，直接返回。
-        - 若包含 '{task_dir}' 占位符，替换为 task_dir 并返回。
-        - 否则，视为相对于项目根目录（即 intermediate_root 的父目录）。
-        """
-        p = Path(path_str)
-        if p.is_absolute():
-            return p
-        # 检查是否包含 {task_dir} 占位符（保留原始字符串判断）
-        if "{task_dir}" in path_str:
-            # 直接替换占位符
-            resolved = path_str.format(task_dir=str(self.task_dir))
-            return Path(resolved)
-        # 否则视为相对于项目根目录（intermediate 的父目录）
-        project_root = self.intermediate_root.parent
-        return project_root / p
+        return self._resolver.resolve(path_str)
 
     def get_step_output_dir(self, step_name: str, default_subdir: str = None) -> Path:
-        step_cfg = self.get_step_config(step_name)
-        out_dir = step_cfg.get("output_dir")
-        if out_dir:
-            return self.resolve_path(out_dir)
-        if default_subdir:
-            return self.task_dir / default_subdir
-        return self.task_dir / step_name
+        return self._resolver.get_step_output_dir(step_name, default_subdir)
 
-    # ===== IO 审计 =====
+    def get_path(self, path_key: str) -> Path:
+        return self._resolver.get_path(path_key)
+
+    def ensure_dir(self, path: Path) -> Path:
+        return self._resolver.ensure_dir(path)
+
     def log_io_summary(
         self, step_name: str, input_paths: List[Path], output_paths: List[Path]
     ):
-        """记录输入输出转化统计"""
         if not self.logger:
             return
 
@@ -157,7 +134,6 @@ class PipelineContext:
         )
 
     def print_task_tree(self):
-        """打印任务目录树"""
         if not self._config.get("logging", {}).get("print_tree", True):
             return
         if self.logger:

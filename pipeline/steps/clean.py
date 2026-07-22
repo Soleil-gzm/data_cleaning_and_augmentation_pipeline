@@ -21,20 +21,22 @@ from ..reporters.registry import ReporterRegistry
 class CleanStep(PipelineStep):
     def run(self) -> bool:
         cfg = self.context.get_step_config("03_clean")
-        bucketed_root = cfg.get("bucketed_root") or (self.context.task_dir / "bucketed")
-        cleaned_root = cfg.get("cleaned_root") or (
-            self.context.task_dir / "cleaned_jsonl"
+        bucketed_root = self.context.resolve_path(
+            cfg.get("bucketed_root") or "{task_dir}/bucketed"
         )
-        trace_root = cfg.get("trace_root") or (self.context.task_dir / "trace_output")
-        configs_dir = Path(cfg.get("configs_dir", "configs/configs_qa"))
+        cleaned_root = self.context.resolve_path(
+            cfg.get("cleaned_root") or "{task_dir}/cleaned_jsonl"
+        )
+        trace_root = self.context.resolve_path(
+            cfg.get("trace_root") or "{task_dir}/trace_output"
+        )
+        configs_dir = self.context.resolve_path(cfg.get("configs_dir", "configs/configs_qa"))
         bucket_config_map = cfg.get("bucket_config_map", [])
         tag = cfg.get("tag", "default")
 
-        # 生成 run_id
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_id = f"{timestamp}_clean_{tag}"
 
-        # 并行配置
         global_workers = self.context.config.get("executor", {}).get("max_workers", 1)
         max_workers = cfg.get("max_workers", global_workers)
         if max_workers <= 1:
@@ -42,22 +44,18 @@ class CleanStep(PipelineStep):
         else:
             self.logger.info(f"清洗使用并行模式，进程数: {max_workers}")
 
-        # 检查分桶目录
-        bucketed_root_path = Path(bucketed_root)
-        if not bucketed_root_path.exists():
-            self.logger.error(f"分桶目录不存在: {bucketed_root_path}")
+        if not bucketed_root.exists():
+            self.logger.error(f"分桶目录不存在: {bucketed_root}")
             return False
 
-        # 收集所有任务
         all_tasks = []
-        bucket_dirs = [d for d in bucketed_root_path.iterdir() if d.is_dir()]
+        bucket_dirs = [d for d in bucketed_root.iterdir() if d.is_dir()]
         if not bucket_dirs:
             self.logger.error("分桶目录为空")
             return False
 
-        # 创建带 run_id 的输出目录
-        cleaned_base = Path(cleaned_root) / run_id
-        trace_base = Path(trace_root) / run_id
+        cleaned_base = cleaned_root / run_id
+        trace_base = trace_root / run_id
         cleaned_base.mkdir(parents=True, exist_ok=True)
         trace_base.mkdir(parents=True, exist_ok=True)
 
@@ -129,7 +127,7 @@ class CleanStep(PipelineStep):
             "step": "clean",
             "timestamp": timestamp,
             "tag": tag,
-            "input_bucketed_root": str(bucketed_root_path),
+            "input_bucketed_root": str(bucketed_root),
             "output_cleaned_root": str(cleaned_base),
             "output_trace_root": str(trace_base),
             "max_workers": max_workers,

@@ -18,7 +18,7 @@ class ReplaceTextStep(PipelineStep):
         if input_file:
             input_path = self.context.resolve_path(input_file)
         else:
-            aug_root = self.context.task_dir / "output_augmented_data"
+            aug_root = self.context.resolve_path("{task_dir}/output_augmented_data")
             input_path = self._find_latest_augmented_file(aug_root)
 
         if input_path is None or not input_path.exists():
