@@ -51,7 +51,7 @@ class Pipeline:
         self.steps_order = self.config.get("steps_order", [])
         if not self.steps_order:
             default_order = [
-06_replace_text                "01_split",
+                "01_split",
                 "02_bucket",
                 "03_clean",
                 "04_finalize",
