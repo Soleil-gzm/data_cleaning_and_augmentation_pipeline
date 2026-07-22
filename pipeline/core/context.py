@@ -1,23 +1,26 @@
 """
-流水线上下文：管理配置、路径、日志、断点
+流水线上下文：薄兼容层，整合配置管理、路径解析、状态追踪
+
+本类作为兼容层，将所有属性和方法转发到具体的管理器类。
+新代码应直接使用 ConfigManager、PathResolver、StateTracker。
 """
 
-import json
-import time
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 import logging
 
+from .config_manager import ConfigManager
 from .path_resolver import PathResolver
+from .state_tracker import StateTracker
 from ..utils.file_utils import get_file_stats, print_directory_tree
 from ..utils.progress import set_progress_global
 
 
 class PipelineContext:
     def __init__(self, config: Dict[str, Any]):
-        self._config = config
+        self._config_manager = ConfigManager(config)
         self._resolver = PathResolver(config)
-        self._resume = config.get("resume", False)
+        self._state_tracker = StateTracker(self._resolver.task_dir)
         self._logger = None
         self._step_io_history = []
 
@@ -26,11 +29,11 @@ class PipelineContext:
 
     @property
     def config(self) -> Dict[str, Any]:
-        return self._config
+        return self._config_manager.config
 
     @property
     def task_name(self) -> str:
-        return self._resolver.task_name
+        return self._config_manager.task_name
 
     @property
     def task_dir(self) -> Path:
@@ -46,7 +49,7 @@ class PipelineContext:
 
     @property
     def resume(self) -> bool:
-        return self._resume
+        return self._config_manager.resume
 
     @property
     def logger(self) -> logging.Logger:
@@ -58,25 +61,19 @@ class PipelineContext:
         self._logger = logger
 
     def get_step_config(self, step_name: str) -> Dict[str, Any]:
-        steps = self._config.get("steps", {})
-        return steps.get(step_name, {})
+        return self._config_manager.get_step_config(step_name)
 
     def is_step_enabled(self, step_name: str) -> bool:
-        step_cfg = self.get_step_config(step_name)
-        return step_cfg.get("enabled", True)
+        return self._config_manager.is_step_enabled(step_name)
 
     def is_step_done(self, step_name: str) -> bool:
-        flag_path = self.task_dir / f".step_{step_name}_done"
-        return flag_path.exists()
+        return self._state_tracker.is_step_done(step_name)
 
     def mark_step_done(self, step_name: str):
-        flag_path = self.task_dir / f".step_{step_name}_done"
-        flag_path.touch()
+        self._state_tracker.mark_step_done(step_name)
 
     def clear_step_done(self, step_name: str):
-        flag_path = self.task_dir / f".step_{step_name}_done"
-        if flag_path.exists():
-            flag_path.unlink()
+        self._state_tracker.clear_step_done(step_name)
 
     def resolve_path(self, path_str: str) -> Path:
         return self._resolver.resolve(path_str)
@@ -134,7 +131,7 @@ class PipelineContext:
         )
 
     def print_task_tree(self):
-        if not self._config.get("logging", {}).get("print_tree", True):
+        if not self._config_manager.config.get("logging", {}).get("print_tree", True):
             return
         if self.logger:
             self.logger.info(f"任务目录结构 ({self.task_dir}):")
