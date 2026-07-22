@@ -51,13 +51,11 @@ class Pipeline:
         self.steps_order = self.config.get("steps_order", [])
         if not self.steps_order:
             default_order = [
-                "00_generate_raw",
-                "01_split",
+06_replace_text                "01_split",
                 "02_bucket",
                 "03_clean",
                 "04_finalize",
                 "05_augment",
-                "06_replace_text",
             ]
             self.steps_order = [
                 s for s in default_order if s in self.config.get("steps", {})
