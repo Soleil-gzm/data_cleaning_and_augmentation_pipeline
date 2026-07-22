@@ -100,15 +100,15 @@ steps:
 
   # ================================================================
   # 步骤02：按轮次分桶
-  # 支持三种策略：manual（手动）、percentile（百分位）、equal_count（等数量）
+  # 当前仅支持 manual（手动）分桶策略
   # ================================================================
   02_bucket:
     enabled: false                # 是否启用
     samples_dir: "{task_dir}/samples"       # 输入样本目录
     output_base: "{task_dir}/bucketed"     # 输出桶根目录
-    strategy: "manual"            # 分桶策略：manual | percentile | equal_count
+    strategy: "manual"            # 分桶策略：当前仅支持 manual
 
-    # ----- 手动模式配置（strategy=manual 时使用）-----
+    # ----- 手动模式配置（strategy=manual）-----
     # 每个桶定义为 [min_turn, max_turn]
     # max_turn >= 9999 视为无上限，桶名格式为 bucket_{min_turn}_plus
     manual_buckets:
@@ -119,11 +119,6 @@ steps:
       - [6, 10]                   # bucket_6_10（7-11轮对话）
       - [11, 20]                  # bucket_11_20（12-21轮对话）
       - [21, 9999]                # bucket_21_plus（长对话）
-
-    # ----- 自动模式配置（strategy=percentile 或 equal_count 时使用）-----
-    auto_params:
-      percentiles: [0, 25, 50, 75, 90, 95, 100]  # percentile 策略参数
-      # min_bucket_size: 5000                     # equal_count 策略参数
 
 
   # ================================================================
