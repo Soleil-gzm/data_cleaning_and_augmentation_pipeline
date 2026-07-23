@@ -171,7 +171,7 @@ def _enhance_dialogue(
 
     num_variants = config["num_variants_per_dialogue"]
     if config.get("adaptive_variants", False):
-        num_variants = max(1, min(3, len(enhanceable)))
+        num_variants = max(1, min(config["adaptive_max_variants"], len(enhanceable)))
 
     msg_prob = config.get("message_augment_prob", 1.0)
     strategy = config.get("strategy", "single")
@@ -261,6 +261,7 @@ class AugmentStep(PipelineStep):
         target_roles = cfg.get("target_roles", ["user"])
         only_loss_true = cfg.get("only_loss_true", True)
         adaptive_variants = cfg.get("adaptive_variants", False)
+        adaptive_max_variants = cfg.get("adaptive_max_variants", 3)
         seed = cfg.get("seed", 42)
         message_augment_prob = cfg.get("message_augment_prob", 1.0)
 
@@ -350,6 +351,7 @@ class AugmentStep(PipelineStep):
             "target_roles": target_roles,
             "only_loss_true": only_loss_true,
             "adaptive_variants": adaptive_variants,
+            "adaptive_max_variants": adaptive_max_variants,
             "message_augment_prob": message_augment_prob,
             "composite_config": composite_config,
             "strategy": strategy,
