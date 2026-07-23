@@ -1,8 +1,7 @@
 """
 流水线调度器
 - 步骤按顺序执行
-- 全局并行控制由 executor.max_workers 提供默认值，具体步骤可覆盖
-- 步骤内部的并行由各步骤自己实现（通过 max_workers 参数）
+- 步骤内部的并行由各步骤自己控制（通过 max_workers 参数）
 """
 
 import sys
@@ -57,10 +56,7 @@ class Pipeline:
                 s for s in default_order if s in self.config.get("steps", {})
             ]
 
-        global_max_workers = self.config.get("executor", {}).get("max_workers", 1)
-        self.logger.info(
-            f"步骤内并行由各步骤的 max_workers 控制，全局默认: {global_max_workers}"
-        )
+
 
     def run(self, step_name: Optional[str] = None) -> bool:
         if step_name:

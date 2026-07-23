@@ -39,8 +39,7 @@ class CleanStep(PipelineStep):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_id = f"{timestamp}_clean_{tag}"
 
-        global_workers = self.context.config.get("executor", {}).get("max_workers", 1)
-        max_workers = cfg.get("max_workers", global_workers)
+        max_workers = cfg.get("max_workers", 1)
         if max_workers <= 1:
             self.logger.info("清洗使用串行模式（max_workers=1）")
         else:
