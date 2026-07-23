@@ -51,7 +51,6 @@ class Pipeline:
                 "01_split",
                 "02_bucket",
                 "03_clean",
-                "04_finalize",
                 "05_augment",
             ]
             self.steps_order = [

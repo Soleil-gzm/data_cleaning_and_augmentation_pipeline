@@ -13,7 +13,7 @@ from ..utils.file_utils import find_latest_file
 
 class FinalizeStep(PipelineStep):
     def run(self) -> bool:
-        cfg = self.context.get_step_config("04_finalize")
+        cfg = self.context.get_step_config("03_clean")
         original_json = self.context.resolve_path(
             cfg.get("original_json") or "{task_dir}/raw_dialogues.json"
         )

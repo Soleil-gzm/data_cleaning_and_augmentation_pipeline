@@ -51,13 +51,12 @@ reporting:
 
 # ------------------- 步骤执行顺序 -------------------
 # 可按需调整顺序，但需注意依赖关系：
-#   01_split -> 02_bucket -> 03_clean -> 04_finalize -> 05_augment
+#   01_split -> 02_bucket -> 03_clean(自动finalize) -> 05_augment
 # 未列出的步骤不会执行
 steps_order:
   - "01_split"
   - "02_bucket"
   - "03_clean"
-  - "04_finalize"
   - "05_augment"
 
 
@@ -100,8 +99,8 @@ steps:
 
 
   # ================================================================
-  # 步骤03：调用 Data-Juicer 清洗每个桶
-  # 根据桶名匹配不同的清洗配置文件
+  # 步骤03：调用 Data-Juicer 清洗每个桶 + 自动 finalize
+  # 清洗完成后自动执行 finalize，应用清洗结果并标记 loss=True/False
   # ================================================================
   03_clean:
     enabled: true                 # 是否启用
@@ -124,16 +123,8 @@ steps:
       - "RetentionAnalyzer"               # 保留率分析器
       - "TurnDistributionAnalyzer"        # 轮次分布分析器
 
-
-  # ================================================================
-  # 步骤04：应用清洗结果，生成最终训练数据
-  # 根据清洗结果标记 loss=True/False
-  # ================================================================
-  04_finalize:
-    enabled: true                 # 是否启用
-    source_run_id: null           # 指定清洗 run_id，留空自动取最新
+    # ===== finalize 配置（清洗完成后自动执行）=====
     original_json: null           # 原始对话文件（与 01 输入一致），必填
-    cleaned_root: "{task_dir}/cleaned_jsonl"       # 清洗结果根目录
     output_root: "{task_dir}/final_training_data"  # 最终训练数据输出根目录
 
 

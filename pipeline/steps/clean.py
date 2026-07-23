@@ -17,6 +17,7 @@ from ..core.step import PipelineStep
 from ..analyzers.registry import AnalyzerRegistry
 from ..reporters.registry import ReporterRegistry
 from ..utils.file_utils import count_lines
+from .finalize import FinalizeStep
 
 
 class CleanStep(PipelineStep):
@@ -154,6 +155,12 @@ class CleanStep(PipelineStep):
 
         # 触发分析器和报告器
         self._run_analyzers_and_reporters(raw_metrics, run_id)
+
+        # 自动执行 finalize 步骤
+        self.logger.info("🚀 自动执行 finalize 步骤")
+        if not self._run_finalize(run_id):
+            self.logger.error("finalize 步骤失败")
+            return False
 
         return True
 
@@ -391,3 +398,13 @@ class CleanStep(PipelineStep):
                 reporter.report(combined, output_base, "clean")
             except Exception as e:
                 self.logger.exception(f"报告器 {rtype} 执行失败: {e}")
+
+    # ================== 自动执行 finalize ==================
+    def _run_finalize(self, run_id: str) -> bool:
+        """在清洗完成后自动执行 finalize 步骤"""
+        try:
+            finalize_step = FinalizeStep(self.context)
+            return finalize_step.run()
+        except Exception as e:
+            self.logger.exception(f"finalize 步骤执行异常: {e}")
+            return False
