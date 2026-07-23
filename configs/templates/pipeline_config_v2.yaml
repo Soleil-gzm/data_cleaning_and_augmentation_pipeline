@@ -23,6 +23,8 @@ resume: false                     # 断点续跑（true=跳过已完成步骤）
 
 # ------------------- 路径管理 -------------------
 paths:
+  input:                          # 全局输入文件配置（各步骤共享）
+    raw_dialogues: null           # 原始对话 JSON 文件（split 和 finalize 共用）
   intermediate: "intermediate"    # 所有中间产物的根目录（task_dir = intermediate/task_name）
   output: "output"                # 最终输出根目录
   project_root: null              # 项目根目录（默认自动推断，建议显式指定）
@@ -69,7 +71,7 @@ steps:
   # ================================================================
   01_split:
     enabled: true                 # 是否启用
-    input_json: null              # 输入 JSON 文件（原始对话），必填
+    input_json: null              # 输入 JSON 文件（优先级：步骤级 > 全局 paths.input.raw_dialogues > 默认）
     output_dir: "{task_dir}/samples"          # 样本输出目录
     stats_dir: "{task_dir}/stats"            # 统计输出目录
     batch_size: 120000            # 每个 JSONL 文件最大行数
@@ -124,7 +126,7 @@ steps:
       - "TurnDistributionAnalyzer"        # 轮次分布分析器
 
     # ===== finalize 配置（清洗完成后自动执行）=====
-    original_json: null           # 原始对话文件（与 01 输入一致），必填
+    original_json: null           # 原始对话文件（优先级：步骤级 > 全局 paths.input.raw_dialogues > 默认）
     output_root: "{task_dir}/final_training_data"  # 最终训练数据输出根目录
 
 

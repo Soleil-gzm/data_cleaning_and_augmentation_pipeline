@@ -81,3 +81,6 @@ class PipelineContext:
 
     def ensure_dir(self, path: Path) -> Path:
         return self._resolver.ensure_dir(path)
+
+    def get_input_file(self, file_key: str) -> Optional[Path]:
+        return self._resolver.get_input_file(file_key)

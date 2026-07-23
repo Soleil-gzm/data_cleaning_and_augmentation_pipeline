@@ -31,6 +31,7 @@ class PathResolver:
             config.get("paths", {}).get("intermediate", "./intermediate")
         )
         self._output_root = Path(config.get("paths", {}).get("output", "./output"))
+        self._input_root = Path(config.get("paths", {}).get("input", {}).get("root", "./"))
         self._task_dir = self._intermediate_root / self._task_name
         self._timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._project_root = self._resolve_project_root(config)
@@ -58,6 +59,20 @@ class PathResolver:
     @property
     def project_root(self) -> Path:
         return self._project_root
+
+    @property
+    def input_root(self) -> Path:
+        return self._input_root
+
+    def get_input_file(self, file_key: str) -> Optional[Path]:
+        """
+        从全局 paths.input 配置中获取输入文件路径
+        """
+        input_config = self._config.get("paths", {}).get("input", {})
+        path_str = input_config.get(file_key)
+        if path_str:
+            return self.resolve(path_str)
+        return None
 
     def _resolve_project_root(self, config: Dict[str, Any]) -> Path:
         """

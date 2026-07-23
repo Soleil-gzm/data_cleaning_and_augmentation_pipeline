@@ -13,9 +13,14 @@ from ..utils.progress import get_progress_bar
 class SplitDialoguesStep(PipelineStep):
     def run(self) -> bool:
         cfg = self.context.get_step_config("01_split")
-        input_json = self.context.resolve_path(
-            cfg.get("input_json", "{task_dir}/raw_dialogues.json")
-        )
+        global_input_json = self.context.get_input_file("raw_dialogues")
+        input_json = cfg.get("input_json")
+        if input_json:
+            input_json = self.context.resolve_path(input_json)
+        elif global_input_json:
+            input_json = global_input_json
+        else:
+            input_json = self.context.resolve_path("{task_dir}/raw_dialogues.json")
         output_dir = self.context.resolve_path(
             cfg.get("output_dir", "{task_dir}/samples")
         )
