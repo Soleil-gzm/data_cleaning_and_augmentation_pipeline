@@ -19,11 +19,11 @@ from ..io import jsonl_reader, JsonlWriter
 
 class BucketStep(PipelineStep):
     def run(self) -> bool:
-        cfg = self.context.get_step_config("02_bucket")
-        samples_dir = self.context.resolve_path(
+        cfg = self.config_manager.get_step_config("02_bucket")
+        samples_dir = self.path_resolver.resolve(
             cfg.get("samples_dir", "{task_dir}/samples")
         )
-        output_base = self.context.resolve_path(
+        output_base = self.path_resolver.resolve(
             cfg.get("output_base", "{task_dir}/bucketed")
         )
         strategy = cfg.get("strategy", "manual")

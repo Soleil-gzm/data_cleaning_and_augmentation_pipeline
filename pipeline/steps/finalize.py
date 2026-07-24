@@ -12,19 +12,19 @@ from ..io import read_json, write_json, jsonl_reader
 
 class FinalizeStep(PipelineStep):
     def run(self) -> bool:
-        cfg = self.context.get_step_config("03_clean")
-        global_original_json = self.context.get_input_file("raw_dialogues")
+        cfg = self.config_manager.get_step_config("03_clean")
+        global_original_json = self.path_resolver.get_input_file("raw_dialogues")
         original_json = cfg.get("original_json")
         if original_json:
-            original_json = self.context.resolve_path(original_json)
+            original_json = self.path_resolver.resolve(original_json)
         elif global_original_json:
             original_json = global_original_json
         else:
-            original_json = self.context.resolve_path("{task_dir}/raw_dialogues.json")
-        cleaned_root = self.context.resolve_path(
+            original_json = self.path_resolver.resolve("{task_dir}/raw_dialogues.json")
+        cleaned_root = self.path_resolver.resolve(
             cfg.get("cleaned_root") or "{task_dir}/cleaned_jsonl"
         )
-        output_root = self.context.resolve_path(
+        output_root = self.path_resolver.resolve(
             cfg.get("output_root") or "{task_dir}/final_training_data"
         )
         source_run_id = cfg.get("source_run_id")

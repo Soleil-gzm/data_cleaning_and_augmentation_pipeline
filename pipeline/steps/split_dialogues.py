@@ -12,19 +12,19 @@ from ..io import read_json, write_json, JsonlWriter
 
 class SplitDialoguesStep(PipelineStep):
     def run(self) -> bool:
-        cfg = self.context.get_step_config("01_split")
-        global_input_json = self.context.get_input_file("raw_dialogues")
+        cfg = self.config_manager.get_step_config("01_split")
+        global_input_json = self.path_resolver.get_input_file("raw_dialogues")
         input_json = cfg.get("input_json")
         if input_json:
-            input_json = self.context.resolve_path(input_json)
+            input_json = self.path_resolver.resolve(input_json)
         elif global_input_json:
             input_json = global_input_json
         else:
-            input_json = self.context.resolve_path("{task_dir}/raw_dialogues.json")
-        output_dir = self.context.resolve_path(
+            input_json = self.path_resolver.resolve("{task_dir}/raw_dialogues.json")
+        output_dir = self.path_resolver.resolve(
             cfg.get("output_dir", "{task_dir}/samples")
         )
-        stats_dir = self.context.resolve_path(cfg.get("stats_dir", "{task_dir}/stats"))
+        stats_dir = self.path_resolver.resolve(cfg.get("stats_dir", "{task_dir}/stats"))
         batch_size = cfg.get("batch_size", 120000)
 
         if not input_json.exists():

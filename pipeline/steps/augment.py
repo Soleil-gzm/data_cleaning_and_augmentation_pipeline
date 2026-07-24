@@ -153,19 +153,19 @@ def _enhance_dialogue(
 
 class AugmentStep(PipelineStep):
     def run(self) -> bool:
-        cfg = self.context.get_step_config("05_augment")
+        cfg = self.config_manager.get_step_config("05_augment")
 
         # ---------- 输入 ----------
         source_run_id = cfg.get("source_run_id")
         input_file = cfg.get("input_file")
 
         if input_file:
-            input_path = self.context.resolve_path(input_file)
+            input_path = self.path_resolver.resolve(input_file)
         elif source_run_id:
-            final_root = self.context.resolve_path("{task_dir}/final_training_data")
+            final_root = self.path_resolver.resolve("{task_dir}/final_training_data")
             input_path = final_root / source_run_id / "cleaned_training_data.json"
         else:
-            final_root = self.context.resolve_path("{task_dir}/final_training_data")
+            final_root = self.path_resolver.resolve("{task_dir}/final_training_data")
             latest_final_dir = self._get_latest_final_dir(final_root)
             if latest_final_dir:
                 input_path = (
@@ -186,7 +186,7 @@ class AugmentStep(PipelineStep):
         tag = cfg.get("tag", "augment")
         run_id = f"{timestamp}_augment_{tag}"
 
-        output_base = self.context.resolve_path(
+        output_base = self.path_resolver.resolve(
             cfg.get("output_dir") or "{task_dir}/output_augmented_data"
         )
         output_dir = output_base / run_id

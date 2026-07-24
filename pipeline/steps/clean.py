@@ -21,17 +21,17 @@ from .finalize import FinalizeStep
 
 class CleanStep(PipelineStep):
     def run(self) -> bool:
-        cfg = self.context.get_step_config("03_clean")
-        bucketed_root = self.context.resolve_path(
+        cfg = self.config_manager.get_step_config("03_clean")
+        bucketed_root = self.path_resolver.resolve(
             cfg.get("bucketed_root") or "{task_dir}/bucketed"
         )
-        cleaned_root = self.context.resolve_path(
+        cleaned_root = self.path_resolver.resolve(
             cfg.get("cleaned_root") or "{task_dir}/cleaned_jsonl"
         )
-        trace_root = self.context.resolve_path(
+        trace_root = self.path_resolver.resolve(
             cfg.get("trace_root") or "{task_dir}/trace_output"
         )
-        configs_dir = self.context.resolve_path(cfg.get("configs_dir", "configs/configs_qa"))
+        configs_dir = self.path_resolver.resolve(cfg.get("configs_dir", "configs/configs_qa"))
         bucket_config_map = cfg.get("bucket_config_map", [])
         tag = cfg.get("tag", "default")
 
@@ -115,7 +115,7 @@ class CleanStep(PipelineStep):
         raw_metrics["buckets"] = dict(raw_metrics["buckets"])
 
         # 保存原始指标
-        report_base = self.context.task_dir / "reports" / run_id
+        report_base = self.path_resolver.task_dir / "reports" / run_id
         report_base.mkdir(parents=True, exist_ok=True)
         metrics_path = report_base / "raw_clean_metrics.json"
         write_json(raw_metrics, metrics_path)
@@ -353,11 +353,11 @@ class CleanStep(PipelineStep):
 
     # ================== 分析器和报告器触发 ==================
     def _run_analyzers_and_reporters(self, raw_metrics, run_id):
-        reporting_cfg = self.context.config.get("reporting", {})
+        reporting_cfg = self.config_manager.config.get("reporting", {})
         if not reporting_cfg.get("enabled", True):
             return
 
-        step_cfg = self.context.get_step_config("03_clean")
+        step_cfg = self.config_manager.get_step_config("03_clean")
         analyzer_names = step_cfg.get(
             "attach_analyzers", ["RetentionAnalyzer", "TurnDistributionAnalyzer"]
         )
@@ -365,7 +365,7 @@ class CleanStep(PipelineStep):
         analysis_results = {}
         for name in analyzer_names:
             try:
-                analyzer = AnalyzerRegistry.get_analyzer(name, self.context)
+                analyzer = AnalyzerRegistry.get_analyzer(name, self.config_manager, self.path_resolver)
                 self.logger.info(f"  运行分析器: {name}")
                 analysis_results[name] = analyzer.analyze(raw_metrics)
             except Exception as e:
@@ -375,12 +375,12 @@ class CleanStep(PipelineStep):
             return
 
         reporters_cfg = reporting_cfg.get("reporters", [])
-        output_base = self.context.task_dir / "reports" / run_id
+        output_base = self.path_resolver.task_dir / "reports" / run_id
         for reporter_cfg in reporters_cfg:
             rtype = reporter_cfg.get("type")
             try:
                 reporter = ReporterRegistry.get_reporter(
-                    rtype, reporter_cfg, self.context
+                    rtype, reporter_cfg, self.config_manager, self.path_resolver
                 )
                 self.logger.info(f"  生成报告: {rtype}")
                 combined = {"analyses": analysis_results, "raw_metrics": raw_metrics}
@@ -392,7 +392,7 @@ class CleanStep(PipelineStep):
     def _run_finalize(self, run_id: str) -> bool:
         """在清洗完成后自动执行 finalize 步骤"""
         try:
-            finalize_step = FinalizeStep(self.context)
+            finalize_step = FinalizeStep(self.config_manager, self.path_resolver, self.state_tracker)
             return finalize_step.run()
         except Exception as e:
             self.logger.exception(f"finalize 步骤执行异常: {e}")

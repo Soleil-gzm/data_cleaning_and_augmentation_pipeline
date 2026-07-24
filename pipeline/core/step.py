@@ -5,13 +5,19 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Optional
-from .context import PipelineContext
+import logging
+
+from .config_manager import ConfigManager
+from .path_resolver import PathResolver
+from .state_tracker import StateTracker
 
 
 class PipelineStep(ABC):
-    def __init__(self, context: PipelineContext):
-        self.context = context
-        self.logger = context.logger
+    def __init__(self, config_manager: ConfigManager, path_resolver: PathResolver, state_tracker: StateTracker):
+        self.config_manager = config_manager
+        self.path_resolver = path_resolver
+        self.state_tracker = state_tracker
+        self.logger = logging.getLogger(self.name)
 
     @abstractmethod
     def run(self) -> bool:

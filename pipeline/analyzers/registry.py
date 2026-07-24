@@ -1,5 +1,7 @@
 from typing import Dict, Type
 from .base import BaseAnalyzer
+from ..core.config_manager import ConfigManager
+from ..core.path_resolver import PathResolver
 
 
 class AnalyzerRegistry:
@@ -12,11 +14,11 @@ class AnalyzerRegistry:
         cls._analyzers[name] = analyzer_cls
 
     @classmethod
-    def get_analyzer(cls, name: str, context) -> BaseAnalyzer:
+    def get_analyzer(cls, name: str, config_manager: ConfigManager, path_resolver: PathResolver) -> BaseAnalyzer:
         analyzer_cls = cls._analyzers.get(name)
         if analyzer_cls is None:
             raise ValueError(f"未注册的分析器: {name}")
-        return analyzer_cls(context)
+        return analyzer_cls(config_manager, path_resolver)
 
     @classmethod
     def list_analyzers(cls):

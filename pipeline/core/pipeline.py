@@ -8,10 +8,13 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .context import PipelineContext
+from .config_manager import ConfigManager
+from .path_resolver import PathResolver
+from .state_tracker import StateTracker
 from .step_registry import StepRegistry
 from ..config.loader import ConfigLoader
 from ..utils.logger import setup_task_logger
+from ..utils.progress import set_progress_global
 
 
 class Pipeline:
@@ -27,12 +30,18 @@ class Pipeline:
         else:
             raise ValueError("必须提供 config_path 或 config_dict")
 
-        # 初始化上下文
-        self.context = PipelineContext(self.config)
+        # 初始化服务
+        self._config_manager = ConfigManager(self.config)
+        self._path_resolver = PathResolver(self.config)
+        self._state_tracker = StateTracker(self._path_resolver.task_dir)
+
+        # 进度条设置
+        show_progress = self.config.get("logging", {}).get("show_progress", True)
+        set_progress_global(show_progress)
 
         # 设置日志
-        task_name = self.context.task_name
-        task_dir = self.context.task_dir
+        task_name = self._config_manager.task_name
+        task_dir = self._path_resolver.task_dir
         log_cfg = self.config.get("logging", {})
         logger = setup_task_logger(
             task_name,
@@ -40,7 +49,6 @@ class Pipeline:
             console_level=log_cfg.get("level", "INFO"),
             file_level=log_cfg.get("file_level", "DEBUG"),
         )
-        self.context.set_logger(logger)
         self.logger = logger
 
         # 步骤执行顺序
@@ -80,18 +88,18 @@ class Pipeline:
             self.logger.warning(f"配置中未定义步骤 {name}，跳过")
             return True
 
-        if not self.context.is_step_enabled(name):
+        if not self._config_manager.is_step_enabled(name):
             self.logger.info(f"步骤 {name} 已禁用，跳过")
             return True
 
-        if self.context.resume and self.context.is_step_done(name):
+        if self._config_manager.resume and self._state_tracker.is_step_done(name):
             self.logger.info(f"步骤 {name} 已完成（断点续跑），跳过")
             return True
 
         self.logger.info(f"🚀 开始执行步骤: {name}")
 
         try:
-            step = StepRegistry.get_step(name, self.context)
+            step = StepRegistry.get_step(name, self._config_manager, self._path_resolver, self._state_tracker)
         except ValueError as e:
             self.logger.error(f"步骤 {name} 未注册: {e}")
             return False
@@ -114,7 +122,7 @@ class Pipeline:
                 success = False
 
         if success:
-            self.context.mark_step_done(name)
+            self._state_tracker.mark_step_done(name)
             self.logger.info(f"✅ 步骤 {name} 执行成功")
         else:
             self.logger.error(f"❌ 步骤 {name} 执行失败")
