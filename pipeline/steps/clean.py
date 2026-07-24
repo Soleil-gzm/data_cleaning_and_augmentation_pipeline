@@ -2,7 +2,6 @@
 03_clean 步骤：并行清洗（文件级），支持进度条连续更新，自动清理临时配置
 """
 
-import json
 import os
 import shutil
 import re
@@ -16,7 +15,7 @@ from tqdm import tqdm
 from ..core.step import PipelineStep
 from ..analyzers.registry import AnalyzerRegistry
 from ..reporters.registry import ReporterRegistry
-from ..utils.file_utils import count_lines
+from ..io import write_json, jsonl_reader, count_lines
 from .finalize import FinalizeStep
 
 
@@ -119,8 +118,7 @@ class CleanStep(PipelineStep):
         report_base = self.context.task_dir / "reports" / run_id
         report_base.mkdir(parents=True, exist_ok=True)
         metrics_path = report_base / "raw_clean_metrics.json"
-        with open(metrics_path, "w", encoding="utf-8") as f:
-            json.dump(raw_metrics, f, indent=2)
+        write_json(raw_metrics, metrics_path)
 
         # 保存元数据
         metadata = {
@@ -145,8 +143,7 @@ class CleanStep(PipelineStep):
                 ),
             },
         }
-        with open(report_base / "run_metadata.json", "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
+        write_json(metadata, report_base / "run_metadata.json")
 
         self.logger.info(
             f"清洗 run_id: {run_id} 完成，元数据保存至 {report_base}/run_metadata.json"
@@ -340,17 +337,10 @@ class CleanStep(PipelineStep):
         dist = defaultdict(int)
         if not file_path.exists():
             return dist
-        with open(file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    data = json.loads(line)
-                    turn = data.get("turn")
-                    if turn is not None:
-                        dist[int(turn)] += 1
-                except:
-                    pass
+        for data in jsonl_reader(file_path):
+            turn = data.get("turn")
+            if turn is not None:
+                dist[int(turn)] += 1
         return dist
 
     # ================== 桶配置匹配 ==================

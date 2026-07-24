@@ -10,11 +10,11 @@
   - _get_bucket_name 和 _get_bucket_for_turn 方法保持通用设计
 """
 
-import json
 import shutil
 from pathlib import Path
 
 from ..core.step import PipelineStep
+from ..io import jsonl_reader, JsonlWriter
 
 
 class BucketStep(PipelineStep):
@@ -67,31 +67,24 @@ class BucketStep(PipelineStep):
 
         total_samples = 0
         for input_file in jsonl_files:
-            file_handles = {}
+            writers = {}
             try:
-                with open(input_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        data = json.loads(line)
-                        turn = data.get("turn")
-                        if turn is None:
-                            continue
-                        _, bucket_name = self._get_bucket_for_turn(turn, buckets)
-                        if bucket_name is None:
-                            continue
-                        bucket_dir = bucket_dirs[bucket_name]
-                        out_file = bucket_dir / input_file.name
-                        if out_file not in file_handles:
-                            file_handles[out_file] = open(
-                                out_file, "a", encoding="utf-8"
-                            )
-                        file_handles[out_file].write(line + "\n")
-                        total_samples += 1
+                for data in jsonl_reader(input_file):
+                    turn = data.get("turn")
+                    if turn is None:
+                        continue
+                    _, bucket_name = self._get_bucket_for_turn(turn, buckets)
+                    if bucket_name is None:
+                        continue
+                    bucket_dir = bucket_dirs[bucket_name]
+                    out_file = bucket_dir / input_file.name
+                    if out_file not in writers:
+                        writers[out_file] = JsonlWriter(out_file, append=True)
+                    writers[out_file].write(data)
+                    total_samples += 1
             finally:
-                for h in file_handles.values():
-                    h.close()
+                for w in writers.values():
+                    w.close()
 
         self.logger.info(f"✅ 分桶完成，共处理 {total_samples} 条样本")
         for name, d in bucket_dirs.items():

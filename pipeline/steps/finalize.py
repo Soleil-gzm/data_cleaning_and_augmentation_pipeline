@@ -2,13 +2,12 @@
 04_finalize：应用清洗结果，标记 loss，生成最终训练数据，输出带 _final 后缀
 """
 
-import json
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 
 from ..core.step import PipelineStep
-from ..utils.file_utils import find_latest_file
+from ..io import read_json, write_json, jsonl_reader
 
 
 class FinalizeStep(PipelineStep):
@@ -49,8 +48,7 @@ class FinalizeStep(PipelineStep):
         self.logger.info(f"使用清洗结果: {run_id}")
 
         # 加载原始数据
-        with open(original_json, "r", encoding="utf-8") as f:
-            dialogues = json.load(f)
+        dialogues = read_json(original_json)
         self.logger.info(f"原始对话数: {len(dialogues)}")
 
         # 收集保留的 turns
@@ -67,8 +65,7 @@ class FinalizeStep(PipelineStep):
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / "cleaned_training_data.json"
 
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(final_data, f, ensure_ascii=False, indent=2)
+        write_json(final_data, output_file)
 
         # 元数据
         metadata = {
@@ -92,8 +89,7 @@ class FinalizeStep(PipelineStep):
                 ),
             },
         }
-        with open(output_dir / "run_metadata.json", "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
+        write_json(metadata, output_dir / "run_metadata.json")
 
         self.logger.info(f"✅ 最终数据已保存: {output_file}")
         return True
@@ -115,19 +111,11 @@ class FinalizeStep(PipelineStep):
             if not bucket_dir.is_dir():
                 continue
             for jsonl_file in bucket_dir.glob("*.jsonl"):
-                with open(jsonl_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                            dialog_id = data.get("id")
-                            turn = data.get("turn")
-                            if dialog_id is not None and turn is not None:
-                                kept[dialog_id].add(turn)
-                        except json.JSONDecodeError:
-                            pass
+                for data in jsonl_reader(jsonl_file):
+                    dialog_id = data.get("id")
+                    turn = data.get("turn")
+                    if dialog_id is not None and turn is not None:
+                        kept[dialog_id].add(turn)
         return kept
 
     def _apply_loss(self, dialogues, kept_turns):

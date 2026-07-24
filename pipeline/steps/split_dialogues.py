@@ -2,12 +2,12 @@
 01_split：多轮对话拆分为样本，带进度条
 """
 
-import json
 from pathlib import Path
 from collections import defaultdict
 
 from ..core.step import PipelineStep
 from ..utils.progress import get_progress_bar
+from ..io import read_json, write_json, JsonlWriter
 
 
 class SplitDialoguesStep(PipelineStep):
@@ -37,15 +37,14 @@ class SplitDialoguesStep(PipelineStep):
         self.logger.info(f"输入: {input_json}")
         self.logger.info(f"输出目录: {output_dir}")
 
-        with open(input_json, "r", encoding="utf-8") as f:
-            dialogues = json.load(f)
+        dialogues = read_json(input_json)
 
         total = len(dialogues)
         self.logger.info(f"总对话数: {total}")
 
         turn_counter = defaultdict(int)
         batch_start = 0
-        current_file = None
+        current_writer = None
         current_file_path = None
         file_count = 0
 
@@ -59,31 +58,30 @@ class SplitDialoguesStep(PipelineStep):
 
             samples = self._process_dialog(dialog_idx, messages, turn_counter)
 
-            if current_file is None or file_count >= batch_size:
-                if current_file:
-                    current_file.close()
+            if current_writer is None or file_count >= batch_size:
+                if current_writer:
+                    current_writer.close()
                 batch_start = dialog_idx
                 batch_end = batch_start + batch_size - 1
                 fname = f"sample_{batch_start:08d}_{batch_end:08d}.jsonl"
                 current_file_path = output_dir / fname
-                current_file = open(current_file_path, "w", encoding="utf-8")
+                current_writer = JsonlWriter(current_file_path)
                 file_count = 0
                 self.logger.debug(f"创建批次: {fname}")
 
             for sample in samples:
-                current_file.write(json.dumps(sample, ensure_ascii=False) + "\n")
+                current_writer.write(sample)
                 file_count += 1
 
-        if current_file:
-            current_file.close()
+        if current_writer:
+            current_writer.close()
 
         stats = {
             "total_samples": sum(turn_counter.values()),
             "turn_distribution": dict(turn_counter),
         }
         stats_path = stats_dir / "turn_distribution.json"
-        with open(stats_path, "w", encoding="utf-8") as f:
-            json.dump(stats, f, ensure_ascii=False, indent=2)
+        write_json(stats, stats_path)
 
         self.logger.info(f"✅ 总样本数: {stats['total_samples']}")
         self.logger.info(f"统计已保存: {stats_path}")

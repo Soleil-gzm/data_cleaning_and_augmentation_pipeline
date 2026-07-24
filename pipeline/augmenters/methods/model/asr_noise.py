@@ -13,7 +13,6 @@ ASR 噪声增强器（model）
     encoder        : 可注入已预加载的 SentenceTransformer（用于多进程共享）
 """
 
-import pickle
 import re
 import numpy as np
 from pathlib import Path
@@ -21,6 +20,7 @@ from typing import Optional, List
 
 from ...base import BaseAugmenter
 from ....utils.random_utils import rand, choice, sample
+from ....io import read_pickle
 
 AFFIRMATIVE_WORDS = {
     "是",
@@ -137,18 +137,15 @@ class AsrNoiseAugmenter(BaseAugmenter):
             self._load_error = "asr_noise 缺少 vectors_path / pinyin_path"
             return
 
-        with open(vectors_path, "rb") as f:
-            vec_data = pickle.load(f)
+        vec_data = read_pickle(vectors_path)
         self.abnormal_words = vec_data["words"]
         self.abnormal_vectors = vec_data["vectors"]
         self.word_to_idx = {w: i for i, w in enumerate(self.abnormal_words)}
 
-        with open(pinyin_path, "rb") as f:
-            self.pinyin_dict = pickle.load(f)
+        self.pinyin_dict = read_pickle(pinyin_path)
 
         if prev_map_path and Path(prev_map_path).exists():
-            with open(prev_map_path, "rb") as f:
-                self.prev_to_abnormals = pickle.load(f)
+            self.prev_to_abnormals = read_pickle(prev_map_path)
         else:
             self.prev_to_abnormals = {}
 

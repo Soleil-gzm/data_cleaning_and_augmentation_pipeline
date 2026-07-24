@@ -16,7 +16,6 @@
   通过 augmenters 配置项启用/禁用各增强器，并设置权重和参数
 """
 
-import json
 import random
 import re
 from copy import deepcopy
@@ -31,6 +30,7 @@ from ..augmenters import CompositeAugmenter, AugmenterRegistry
 from ..utils.random_utils import RandomGenerator
 from ..augmenters.categories import requires_model
 from ..augmenters.utils import _ensure_jieba
+from ..io import read_json, write_json, write_jsonl
 
 from .. import augmenters  # 触发所有增强器的注册（import 时完成）
 
@@ -245,8 +245,7 @@ class AugmentStep(PipelineStep):
         _ensure_jieba()
 
         # ---------- 加载数据 ----------
-        with open(input_path, "r", encoding="utf-8") as f:
-            original_data = json.load(f)
+        original_data = read_json(input_path)
         self.logger.info(f"原始对话数: {len(original_data)}")
 
         # 诊断：抽样检查有多少对话有可增强的消息
@@ -300,16 +299,10 @@ class AugmentStep(PipelineStep):
         variants_json = output_dir / f"variants_only_{timestamp}.json"
         variants_jsonl = output_dir / f"variants_only_{timestamp}.jsonl"
 
-        with open(combined_json, "w", encoding="utf-8") as f:
-            json.dump(all_dialogues, f, ensure_ascii=False, indent=2)
-        with open(combined_jsonl, "w", encoding="utf-8") as f:
-            for d in all_dialogues:
-                f.write(json.dumps(d, ensure_ascii=False) + "\n")
-        with open(variants_json, "w", encoding="utf-8") as f:
-            json.dump(all_variants, f, ensure_ascii=False, indent=2)
-        with open(variants_jsonl, "w", encoding="utf-8") as f:
-            for d in all_variants:
-                f.write(json.dumps(d, ensure_ascii=False) + "\n")
+        write_json(all_dialogues, combined_json)
+        write_jsonl(all_dialogues, combined_jsonl)
+        write_json(all_variants, variants_json)
+        write_jsonl(all_variants, variants_jsonl)
 
         metadata = {
             "run_id": run_id,
@@ -325,8 +318,7 @@ class AugmentStep(PipelineStep):
                 "failed_dialogues": failed,
             },
         }
-        with open(output_dir / "run_metadata.json", "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        write_json(metadata, output_dir / "run_metadata.json")
 
         self.logger.info(f"增强完成，结果保存在: {output_dir}")
         return True
