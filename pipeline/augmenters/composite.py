@@ -5,8 +5,7 @@
 - 支持 single / multi_step 两种策略
 - single 策略内置 fallback：若首次选择的增强器未产生变化，
   会从同类别剩余增强器中再挑重试最多 retry_times 次
-- 支持通过 "enabled_categories" 限制启用的增强器类别
-  （例如只启用 lexical、order 两类，不加载 model）
+- 通过 weight 控制增强器启用状态和选中概率：weight > 0 启用，weight <= 0 禁用
 """
 import random
 from typing import List, Optional, Dict
@@ -34,25 +33,19 @@ class CompositeAugmenter(BaseAugmenter):
 
         cfg = config or {}
         augmenters_cfg = cfg.get("augmenters", {}) if cfg else {}
-        enabled_cats = cfg.get("enabled_categories", None)  # None = 全启用
-        self._enabled_categories = enabled_cats
 
         for name, sub in augmenters_cfg.items():
             if not isinstance(sub, dict):
                 continue
-            if not sub.get("enabled", False):      # 跳过未启用的
-                continue
-            cat = AugmenterRegistry.get_category(name) or CATEGORY_LEXICAL
-            if enabled_cats is not None and cat not in enabled_cats:  # 跳过不在启用类别中的
-                continue
             weight = float(sub.get("weight", 1.0))
-            if weight <= 0:                          # 跳过权重为 0 的
+            if weight <= 0:                          # 权重<=0 的方法不使用
                 continue
             
-            aug = AugmenterRegistry.get(name, sub)   # 从注册表拿实例
-            self.augmenters.append(aug)              # 放入列表
-            self.weights.append(weight)             # 记录权重
-            self.names.append(name)                 # 记录名字
+            aug = AugmenterRegistry.get(name, sub)
+            self.augmenters.append(aug)
+            self.weights.append(weight)
+            self.names.append(name)
+            cat = AugmenterRegistry.get_category(name) or CATEGORY_LEXICAL
             self.by_category.setdefault(cat, []).append(len(self.augmenters) - 1)
 
         if not self.augmenters:

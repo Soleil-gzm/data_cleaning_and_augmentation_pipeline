@@ -186,62 +186,48 @@ steps:
     single_retry: 3               # 单次策略：重试次数（未产生变化时）
     multi_retry: 2                # 多步策略：重试次数
 
-    # ----- 启用类别限制（可选）-----
-    # 若指定，仅启用列出的类别，其他类别不会加载
-    # enabled_categories: ["lexical", "order"]  # 不启用 model 类可避免加载 SentenceTransformer
-
-    # ----- 增强器配置（新格式，推荐）-----
-    # weight: 控制增强器被选中的概率（相对权重，数值越大被选中概率越高）
-    # prob:   控制词级别操作概率（仅以下增强器支持：homophone, synonym_replace,
-    #         random_delete, random_entity_replace, asr_noise）
+    # ----- 增强器配置 -----
+    # weight: 相对权重，控制增强器被选中的概率（weight > 0 启用，weight <= 0 禁用）
+    # prob:   词级别操作概率（仅部分增强器支持）
     augmenters:
       # ========== 词法替换类（lexical）==========
       insert_filler:              # 插入语气词（如"嗯"、"那个"）
-        enabled: true
-        weight: 1.0
+        weight: 1.0               # 启用，权重1.0
         fillers: ["嗯", "那个", "就是", "呃", "啊", "这个", "其实"]
 
       stutter:                    # 结巴模拟（重复首字）
-        enabled: false
-        weight: 1.0
+        weight: 0                 # 禁用（weight=0）
         repeat_max: 2             # 最大重复次数
 
       homophone:                  # 同音字替换
-        enabled: false
-        weight: 1.0
+        weight: 0                 # 禁用
         prob: 0.2                 # 替换概率
         dict_path: "resources/Homophone_tab.txt"
 
       synonym_replace:            # 同义词替换
-        enabled: false
-        weight: 1.0
+        weight: 0                 # 禁用
         prob: 0.3                 # 替换概率
         dict_path: "resources/synonyms.txt"
 
       random_delete:              # 随机删除字符
-        enabled: false
-        weight: 1.0
+        weight: 0                 # 禁用
         prob: 0.1                 # 删除概率
 
       random_entity_replace:      # 随机实体替换（银行、公司名等）
-        enabled: false
-        weight: 1.0
+        weight: 0                 # 禁用
         prob: 0.2                 # 替换概率
         dict_path: "resources/bank.txt"
 
       word_repetition:            # 词语重复
-        enabled: false
-        weight: 2.0
+        weight: 0                 # 禁用
 
       # ========== 语序重排类（order）==========
       reorder:                    # 语序打乱
-        enabled: false
-        weight: 1.0
+        weight: 0                 # 禁用
 
       # ========== 模型类（model）==========
       asr_noise:                  # ASR 噪声增强（模拟语音识别错误）
-        enabled: false
-        weight: 5.0
+        weight: 0                 # 禁用
         prob: 0.5                 # 每个候选位置的操作概率
         alpha: 0.7                # 拼音相似度权重（1-alpha 为语义相似度权重）
         max_operations: 2         # 单次增强最多修改位置数
@@ -252,25 +238,6 @@ steps:
         pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_pinyin.pkl"
         prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/prev_to_abnormals.pkl"
         model_path: "Models/paraphrase-multilingual-MiniLM-L12-v2"
-
-    # ----- 旧格式增强权重（已废弃，保留兼容）-----
-    # augment_weights:
-    #   insert_filler: 1
-    #   stutter: 1
-    #   reorder: 1
-    #   homophone: 0
-    #   random_delete: 1
-    #   random_entity_replace: 1
-    #   similarword: 0
-    #   word_repetition: 2
-    #   asr_noise: 5.0
-
-    # ----- ASR 噪声增强缓存文件（旧格式，保留兼容）-----
-    # asr_cache:
-    #   vectors_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_vectors.pkl"
-    #   pinyin_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/abnormal_pinyin.pkl"
-    #   prev_map_path: "resources/prev_clean/sample_20/qwen/prev_clean_prev_window_1_no_prob/prev_to_abnormals.pkl"
-    #   model_path: "Models/paraphrase-multilingual-MiniLM-L12-v2"
 
 
   # ================================================================

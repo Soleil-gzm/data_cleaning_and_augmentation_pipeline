@@ -28,68 +28,10 @@ from tqdm import tqdm
 
 from ..core.step import PipelineStep
 from ..augmenters import CompositeAugmenter, AugmenterRegistry
-from ..augmenters.categories import requires_model, CATEGORY_MODEL
+from ..augmenters.categories import requires_model
 from ..augmenters.utils import _ensure_jieba
 
 from .. import augmenters  # 触发所有增强器的注册（import 时完成）
-
-NAME_ALIAS = {
-    "similarword": "synonym_replace",
-    "synonym": "synonym_replace",
-    "entity_replace": "random_entity_replace",
-}
-
-
-def _migrate_legacy_weights(
-    augment_weights: Optional[Dict[str, float]],
-) -> Dict[str, Dict[str, Any]]:
-    """将旧格式 augment_weights 迁移到新格式 augmenters"""
-    if not augment_weights:
-        return {}
-    out: Dict[str, Dict[str, Any]] = {}
-    for name, w in augment_weights.items():
-        try:
-            weight = float(w)
-        except Exception:
-            weight = 0.0
-        if weight <= 0:
-            continue
-        real = NAME_ALIAS.get(name, name)
-        out[real] = {
-            "enabled": True,
-            "weight": weight,
-        }
-    return out
-
-
-def _build_augmenters_cfg(
-    augmenters_user: Dict[str, Dict[str, Any]],
-    asr_cache: Dict[str, Any],
-) -> Dict[str, Dict[str, Any]]:
-    """合并用户 augmenters 配置与 ASR 模型/缓存路径"""
-    out: Dict[str, Dict[str, Any]] = {}
-    for name, sub in (augmenters_user or {}).items():
-        if not isinstance(sub, dict):
-            continue
-        real = NAME_ALIAS.get(name, name)
-        merged = dict(sub)
-        if real == "asr_noise" and asr_cache:
-            for key in (
-                "vectors_path",
-                "pinyin_path",
-                "prev_map_path",
-                "model_path",
-                "model_name",
-            ):
-                if (
-                    key not in merged
-                    and key in asr_cache
-                    and asr_cache[key] is not None
-                ):
-                    merged[key] = asr_cache[key]
-        out[real] = merged
-    return out
-
 
 def _get_enhanceable_indices(messages, target_roles, only_loss_true):
     """获取可增强消息的索引列表"""
@@ -174,9 +116,10 @@ def _enhance_dialogue(
         num_variants = max(1, min(config["adaptive_max_variants"], len(enhanceable)))
 
     msg_prob = config.get("message_augment_prob", 1.0)
-    strategy = config.get("strategy", "single")
-    min_steps = config.get("min_steps", 1)
-    max_steps = config.get("max_steps", min_steps)
+    composite_cfg = config.get("composite_config", {})
+    strategy = composite_cfg.get("strategy", "single")
+    min_steps = composite_cfg.get("min_steps", 1)
+    max_steps = composite_cfg.get("max_steps", min_steps)
 
     applied_names = composite.enabled_names()
 
@@ -268,38 +211,20 @@ class AugmentStep(PipelineStep):
         strategy = cfg.get("strategy", "single")
         min_steps = cfg.get("min_steps", 1)
         max_steps = cfg.get("max_steps", min_steps)
-        enabled_categories = cfg.get("enabled_categories", None)
 
-        # 迁移旧格式
-        augmenters_user = cfg.get("augmenters", {})
-        if not augmenters_user:
-            augmenters_user = _migrate_legacy_weights(cfg.get("augment_weights"))
-            if augmenters_user:
-                self.logger.warning(
-                    "检测到旧格式 augment_weights，已自动迁移为新 augmenters 格式；"
-                    "建议后续直接使用 augmenters 详细格式以支持专属参数与 asr_cache 注入。"
-                )
+        augmenters_cfg = cfg.get("augmenters", {})
 
-        asr_cache = cfg.get("asr_cache", {}) or {}
-        augmenters_cfg = _build_augmenters_cfg(augmenters_user, asr_cache)
-
-        # 模型类增强器是否被启用
         model_enabled = False
         for name, sub in augmenters_cfg.items():
-            if sub.get("enabled", False) and requires_model(name):
-                if (
-                    enabled_categories is not None
-                    and CATEGORY_MODEL not in enabled_categories
-                ):
-                    continue
+            if isinstance(sub, dict) and sub.get("weight", 1.0) > 0 and requires_model(name):
                 model_enabled = True
                 break
 
         composite_config = {
             "augmenters": augmenters_cfg,
             "strategy": strategy,
-            "default_steps": max_steps,
-            "enabled_categories": enabled_categories,
+            "min_steps": min_steps,
+            "max_steps": max_steps,
             "single_retry": cfg.get("single_retry", 3),
             "multi_retry": cfg.get("multi_retry", 2),
         }
@@ -307,8 +232,7 @@ class AugmentStep(PipelineStep):
         self.logger.info(f"增强 run_id: {run_id}")
         self.logger.info(f"输入: {input_path}")
         self.logger.info(f"输出: {output_dir}")
-        self.logger.info(f"启用增强器: {list(augmenters_cfg.keys())}")
-        self.logger.info(f"启用类别: {enabled_categories or '全部'}")
+        self.logger.info(f"增强器配置: {list(augmenters_cfg.keys())}")
         self.logger.info(
             f"组合策略: {strategy}, min_steps={min_steps}, max_steps={max_steps}"
         )
@@ -354,9 +278,6 @@ class AugmentStep(PipelineStep):
             "adaptive_max_variants": adaptive_max_variants,
             "message_augment_prob": message_augment_prob,
             "composite_config": composite_config,
-            "strategy": strategy,
-            "min_steps": min_steps,
-            "max_steps": max_steps,
             "seed": seed,
         }
 
