@@ -18,17 +18,42 @@
 """
 
 import random
-from typing import Optional, Sequence, List, Any
+from typing import Optional, Sequence, List, Any, Protocol
 
 
-def rand(rng: Optional[random.Random] = None) -> float:
+class RandomLike(Protocol):
+    """
+    随机数生成器协议
+    定义了随机数工具函数所需的最小接口
+    兼容 random.Random 和 RandomGenerator
+    """
+
+    def random(self) -> float: ...
+
+    def choice(self, seq: Sequence[Any]) -> Any: ...
+
+    def choices(
+        self,
+        population: Sequence[Any],
+        weights: Optional[Sequence[float]] = None,
+        k: int = 1,
+    ) -> List[Any]: ...
+
+    def randint(self, a: int, b: int) -> int: ...
+
+    def sample(self, population: Sequence[Any], k: int) -> List[Any]: ...
+
+    def shuffle(self, seq: List[Any]) -> None: ...
+
+
+def rand(rng: Optional[RandomLike] = None) -> float:
     """返回 [0.0, 1.0) 范围内的随机浮点数"""
     if rng is None:
         return random.random()
     return rng.random()
 
 
-def choice(seq: Sequence[Any], rng: Optional[random.Random] = None) -> Any:
+def choice(seq: Sequence[Any], rng: Optional[RandomLike] = None) -> Any:
     """从序列中随机选择一个元素"""
     if rng is None:
         return random.choice(seq)
@@ -38,7 +63,7 @@ def choice(seq: Sequence[Any], rng: Optional[random.Random] = None) -> Any:
 def choices(
     population: Sequence[Any],
     weights: Optional[Sequence[float]] = None,
-    rng: Optional[random.Random] = None,
+    rng: Optional[RandomLike] = None,
     k: int = 1,
 ) -> List[Any]:
     """从总体中随机选择 k 个元素，可指定权重"""
@@ -47,7 +72,7 @@ def choices(
     return rng.choices(population, weights=weights, k=k)
 
 
-def randint(a: int, b: int, rng: Optional[random.Random] = None) -> int:
+def randint(a: int, b: int, rng: Optional[RandomLike] = None) -> int:
     """返回 [a, b] 范围内的随机整数"""
     if rng is None:
         return random.randint(a, b)
@@ -57,7 +82,7 @@ def randint(a: int, b: int, rng: Optional[random.Random] = None) -> int:
 def sample(
     population: Sequence[Any],
     k: int,
-    rng: Optional[random.Random] = None,
+    rng: Optional[RandomLike] = None,
 ) -> List[Any]:
     """从总体中随机选择 k 个不重复的元素"""
     if rng is None:
@@ -65,12 +90,13 @@ def sample(
     return rng.sample(population, k)
 
 
-def shuffle(seq: List[Any], rng: Optional[random.Random] = None):
-    """随机打乱序列（原地修改）"""
+def shuffle(seq: List[Any], rng: Optional[RandomLike] = None) -> List[Any]:
+    """随机打乱序列（原地修改，同时返回原序列以支持链式调用）"""
     if rng is None:
         random.shuffle(seq)
     else:
         rng.shuffle(seq)
+    return seq
 
 
 class RandomGenerator:
@@ -121,4 +147,5 @@ __all__ = [
     "sample",
     "shuffle",
     "RandomGenerator",
+    "RandomLike",
 ]
