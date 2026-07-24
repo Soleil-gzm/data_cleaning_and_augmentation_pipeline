@@ -213,11 +213,6 @@ steps:
         weight: 0                 # 禁用
         prob: 0.1                 # 删除概率
 
-      random_entity_replace:      # 随机实体替换（银行、公司名等）
-        weight: 0                 # 禁用
-        prob: 0.2                 # 替换概率
-        dict_path: "resources/bank.txt"
-
       word_repetition:            # 词语重复
         weight: 0                 # 禁用
 

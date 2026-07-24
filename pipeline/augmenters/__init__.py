@@ -23,7 +23,6 @@ from .methods.lexical import (
     StutterAugmenter,
     HomophoneAugmenter,
     RandomDeleteAugmenter,
-    RandomEntityReplaceAugmenter,
     SynonymAugmenter,
     WordRepetitionAugmenter,
 )
@@ -44,10 +43,7 @@ AugmenterRegistry.register(
 AugmenterRegistry.register(
     "random_delete", RandomDeleteAugmenter, category=CATEGORY_LEXICAL
 )
-AugmenterRegistry.register(
-    "random_entity_replace", RandomEntityReplaceAugmenter,
-    aliases=("entity_replace",), category=CATEGORY_LEXICAL
-)
+
 AugmenterRegistry.register(
     "synonym_replace", SynonymAugmenter,
     aliases=("similarword", "synonym"), category=CATEGORY_LEXICAL
@@ -79,7 +75,6 @@ __all__ = [
     "StutterAugmenter",
     "HomophoneAugmenter",
     "RandomDeleteAugmenter",
-    "RandomEntityReplaceAugmenter",
     "SynonymAugmenter",
     "WordRepetitionAugmenter",
     "ReorderAugmenter",
