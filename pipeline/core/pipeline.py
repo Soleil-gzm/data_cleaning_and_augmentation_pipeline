@@ -105,8 +105,8 @@ class Pipeline:
             return False
 
         if not step.pre_run():
-            self.logger.warning(f"步骤 {name} 前置钩子返回 False，跳过")
-            return True
+            self.logger.error(f"❌ 步骤 {name} 前置条件不满足，终止执行")
+            return False
 
         try:
             success = step.run()
