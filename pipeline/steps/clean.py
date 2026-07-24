@@ -293,12 +293,16 @@ class CleanStep(PipelineStep):
                 dj_process = [dj_process]
             cmd = dj_process + ["--config", str(temp_config)]
 
-            # 静默执行
+            # 静默执行，通过环境变量禁用 tqdm 进度条
+            env = os.environ.copy()
+            env["TQDM_DISABLE"] = "1"
+            env["DJ_LOG_LEVEL"] = "ERROR"
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=600,  # 单个文件10分钟超时
+                env=env,
             )
 
             if result.returncode != 0 or not output_file.exists():
