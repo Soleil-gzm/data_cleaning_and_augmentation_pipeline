@@ -5,9 +5,9 @@
 """
 from typing import Optional
 import re
-import random
 
 from ...base import BaseAugmenter
+from ....utils.random_utils import rand, choice
 
 
 class InsertFillerAugmenter(BaseAugmenter):
@@ -19,13 +19,13 @@ class InsertFillerAugmenter(BaseAugmenter):
         self.prob = float(config.get("prob", 0.3))
         self.fillers = list(config.get("fillers", self.FILLERS))
 
-    def apply(self, text: str, rng: Optional[random.Random] = None) -> str:
+    def apply(self, text: str, rng=None) -> str:
         if not isinstance(text, str) or len(text.strip()) == 0:
             return text
 
-        filler = self._choice(self.fillers, rng)
+        filler = choice(self.fillers, rng=rng)
 
-        if self._rand(rng) < 0.6:
+        if rand(rng=rng) < 0.6:
             return f"{filler}，{text}"
 
         match = re.search(r"[，,。？!]", text)

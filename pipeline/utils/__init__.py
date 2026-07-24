@@ -15,6 +15,15 @@ from .file_utils import (
 )
 from .plot_utils import plot_turn_distribution
 from .progress import get_progress_bar, set_progress_global
+from .random_utils import (
+    rand,
+    choice,
+    choices,
+    randint,
+    sample,
+    shuffle,
+    RandomGenerator,
+)
 
 __all__ = [
     "setup_task_logger",
@@ -29,4 +38,11 @@ __all__ = [
     "plot_turn_distribution",
     "get_progress_bar",
     "set_progress_global",
+    "rand",
+    "choice",
+    "choices",
+    "randint",
+    "sample",
+    "shuffle",
+    "RandomGenerator",
 ]

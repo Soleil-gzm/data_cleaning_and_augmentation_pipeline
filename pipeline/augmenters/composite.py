@@ -12,6 +12,7 @@ from typing import List, Optional, Dict
 
 from .base import BaseAugmenter, AugmenterRegistry
 from .categories import CATEGORY_LEXICAL, CATEGORY_ORDER, CATEGORY_MODEL
+from ..utils.random_utils import choices, randint
 
 
 class _NullAugmenter(BaseAugmenter):
@@ -73,10 +74,7 @@ class CompositeAugmenter(BaseAugmenter):
         if not candidates_idx:
             return self.augmenters[0]
 
-        if rng is None:
-            chosen_idx = random.choices(candidates_idx, weights=weights, k=1)[0]
-        else:
-            chosen_idx = rng.choices(candidates_idx, weights=weights, k=1)[0]
+        chosen_idx = choices(candidates_idx, weights=weights, rng=rng, k=1)[0]
         return self.augmenters[chosen_idx]
 
     def _distinct_pick(self, tried: set, rng, category=None):
@@ -89,10 +87,7 @@ class CompositeAugmenter(BaseAugmenter):
         if not candidates:
             return self._pick_one(rng, category)
         weights = [self.weights[i] for i in candidates]
-        if rng is None:
-            idx = random.choices(candidates, weights=weights, k=1)[0]
-        else:
-            idx = rng.choices(candidates, weights=weights, k=1)[0]
+        idx = choices(candidates, weights=weights, rng=rng, k=1)[0]
         tried.add(idx)
         return self.augmenters[idx]
 
@@ -123,10 +118,7 @@ class CompositeAugmenter(BaseAugmenter):
         if max_steps < min_steps:
             max_steps = min_steps
 
-        if rng is None:
-            steps = random.randint(min_steps, max_steps)
-        else:
-            steps = rng.randint(min_steps, max_steps)
+        steps = randint(min_steps, max_steps, rng=rng)
 
         result = text
         for _ in range(steps):

@@ -8,7 +8,7 @@
 
 增强方法类别：
   - lexical（词法替换类）：insert_filler, stutter, homophone, synonym_replace,
-                           random_delete, random_entity_replace, word_repetition
+                           random_delete, word_repetition
   - order（语序重排类）：reorder
   - model（模型类）：asr_noise（需要预加载模型）
 
@@ -28,6 +28,7 @@ from tqdm import tqdm
 
 from ..core.step import PipelineStep
 from ..augmenters import CompositeAugmenter, AugmenterRegistry
+from ..utils.random_utils import RandomGenerator
 from ..augmenters.categories import requires_model
 from ..augmenters.utils import _ensure_jieba
 
@@ -336,7 +337,7 @@ class AugmentStep(PipelineStep):
         all_variants = []
         total_variants = 0
         failed = []
-        rng = random.Random(config["seed"])
+        rng = RandomGenerator(config["seed"]).rng
 
         composite = CompositeAugmenter(config["composite_config"])
 

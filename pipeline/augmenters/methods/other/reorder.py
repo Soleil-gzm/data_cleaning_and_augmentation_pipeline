@@ -6,7 +6,6 @@
 """
 from typing import Optional
 import re
-import random
 
 from ...base import BaseAugmenter
 
@@ -15,7 +14,7 @@ NEGATION_WORDS = {"不", "没", "无", "别", "不要", "不用", "未曾"}
 
 
 class ReorderAugmenter(BaseAugmenter):
-    def apply(self, text: str, rng: Optional[random.Random] = None) -> str:
+    def apply(self, text: str, rng=None) -> str:
         if not isinstance(text, str) or len(text.strip()) < 5:
             return text
         if any(neg in text for neg in NEGATION_WORDS):

@@ -4,13 +4,13 @@
 """
 from typing import Optional
 import re
-import random
 
 from ...base import BaseAugmenter
+from ....utils.random_utils import choice
 
 
 class WordRepetitionAugmenter(BaseAugmenter):
-    def apply(self, text: str, rng: Optional[random.Random] = None) -> str:
+    def apply(self, text: str, rng=None) -> str:
         if not isinstance(text, str) or not text.strip():
             return text
 
@@ -27,5 +27,5 @@ class WordRepetitionAugmenter(BaseAugmenter):
         if not candidates:
             return text
 
-        chosen = self._choice(candidates, rng)
+        chosen = choice(candidates, rng=rng)
         return text.replace(chosen, chosen + chosen, 1)

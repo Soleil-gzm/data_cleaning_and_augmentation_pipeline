@@ -33,36 +33,6 @@ class BaseAugmenter(ABC):
         """子类重写，加载模型、词典等"""
         pass
 
-    @staticmethod
-    def _rand(rng: Optional[random.Random] = None):
-        if rng is None:
-            return random.random()
-        return rng.random()
-
-    @staticmethod
-    def _choice(seq, rng: Optional[random.Random] = None):
-        if rng is None:
-            return random.choice(seq)
-        return rng.choice(seq)
-
-    @staticmethod
-    def _choices(population, weights=None, rng: Optional[random.Random] = None, k: int = 1):
-        if rng is None:
-            return random.choices(population, weights=weights, k=k)
-        return rng.choices(population, weights=weights, k=k)
-
-    @staticmethod
-    def _randint(a: int, b: int, rng: Optional[random.Random] = None) -> int:
-        if rng is None:
-            return random.randint(a, b)
-        return rng.randint(a, b)
-
-    @staticmethod
-    def _sample(population, k: int, rng: Optional[random.Random] = None):
-        if rng is None:
-            return random.sample(population, k)
-        return rng.sample(population, k)
-
 
 class AugmenterRegistry:
     """增强器注册表（支持别名与分类）"""

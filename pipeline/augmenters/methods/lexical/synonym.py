@@ -4,10 +4,10 @@
 
 from pathlib import Path
 from typing import Optional
-import random
 
 from ...base import BaseAugmenter
 from ...utils import tokenize, load_synonym_dict
+from ....utils.random_utils import rand, choice
 
 
 class SynonymAugmenter(BaseAugmenter):
@@ -27,7 +27,7 @@ class SynonymAugmenter(BaseAugmenter):
         self.synonym_dict = load_synonym_dict(dict_path)
         self.prob = float(self.config.get("prob", 0.3))
 
-    def apply(self, text: str, rng: Optional[random.Random] = None) -> str:
+    def apply(self, text: str, rng=None) -> str:
         self.initialize()
         if not isinstance(text, str) or not text.strip():
             return text
@@ -38,10 +38,10 @@ class SynonymAugmenter(BaseAugmenter):
             return text
         new_tokens = []
         for token in tokens:
-            if token in self.synonym_dict and self._rand(rng) < self.prob:
+            if token in self.synonym_dict and rand(rng=rng) < self.prob:
                 synonyms = self.synonym_dict[token]
                 if synonyms:
-                    new_tokens.append(self._choice(synonyms, rng))
+                    new_tokens.append(choice(synonyms, rng=rng))
                     continue
             new_tokens.append(token)
         return "".join(new_tokens)

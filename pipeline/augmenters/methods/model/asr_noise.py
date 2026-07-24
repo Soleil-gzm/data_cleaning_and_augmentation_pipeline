@@ -15,12 +15,12 @@ ASR 噪声增强器（model）
 
 import pickle
 import re
-import random
 import numpy as np
 from pathlib import Path
 from typing import Optional, List
 
 from ...base import BaseAugmenter
+from ....utils.random_utils import rand, choice, sample
 
 AFFIRMATIVE_WORDS = {
     "是",
@@ -274,7 +274,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
 
         max_ops = min(self.max_operations, len(candidate_indices))
         selected = []
-        shuffled = self._sample(candidate_indices, len(candidate_indices), rng)
+        shuffled = sample(candidate_indices, len(candidate_indices), rng=rng)
         for idx in shuffled:
             if not selected or all(abs(idx - x) >= 2 for x in selected):
                 selected.append(idx)
@@ -286,7 +286,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
             prev_word = words[pos - 1]
             target_word = words[pos]
 
-            if self._rand(rng) > self.prob:
+            if rand(rng=rng) > self.prob:
                 continue
 
             candidates = self.find_best_abnormals(
@@ -303,7 +303,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
 
             chosen = None
             for _ in range(5):
-                cand = self._choice(candidates, rng)
+                cand = choice(candidates, rng=rng)
                 if target_polarity is None:
                     chosen = cand
                     break
@@ -319,7 +319,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
             if chosen is None:
                 continue
 
-            is_insert = self._rand(rng) < self.insert_prob
+            is_insert = rand(rng=rng) < self.insert_prob
             operations.append((pos, chosen, is_insert))
 
         if not operations:
@@ -335,7 +335,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
                 new_words[pos] = new_word
         return "".join(new_words)
 
-    def apply(self, text: str, rng: Optional[random.Random] = None) -> str:
+    def apply(self, text: str, rng=None) -> str:
         self.initialize()
         if not isinstance(text, str) or not text.strip():
             return text
