@@ -69,7 +69,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
         if not path.is_absolute():
             root = (
                 Path(__file__).resolve().parents[4]
-            )  # pipeline/augmenters/methods/model -> project root
+            )  # 如果是相对路径，从当前文件向上找4层目录，定位到项目根目录
             path = root / path
         return str(path)
 
@@ -138,9 +138,9 @@ class AsrNoiseAugmenter(BaseAugmenter):
             return
 
         vec_data = read_pickle(vectors_path)
-        self.abnormal_words = vec_data["words"]
-        self.abnormal_vectors = vec_data["vectors"]
-        self.word_to_idx = {w: i for i, w in enumerate(self.abnormal_words)}
+        self.abnormal_words = vec_data["words"]         # 异常词列表
+        self.abnormal_vectors = vec_data["vectors"]     # 对应的向量矩阵
+        self.word_to_idx = {w: i for i, w in enumerate(self.abnormal_words)}    # 词到索引的映射
 
         self.pinyin_dict = read_pickle(pinyin_path)
 
@@ -215,6 +215,8 @@ class AsrNoiseAugmenter(BaseAugmenter):
         self.initialize()
         if not getattr(self, "_ready", False):
             return []
+
+        # 1. 选择候选异常词
         if prev_word and prev_word in self.prev_to_abnormals:
             candidates = self.prev_to_abnormals[prev_word]
         else:
@@ -222,16 +224,20 @@ class AsrNoiseAugmenter(BaseAugmenter):
         if not candidates:
             return []
 
+        # 2. 计算目标词的语义向量
         target_vec = self.encoder.encode([target_word])[0]
+        
         scores = []
+        # 3. 计算每个候选词的综合得分
         for ab in candidates:
             idx = self.word_to_idx.get(ab)
             if idx is None:
                 continue
-            sem_sim = self._cosine_sim(target_vec, self.abnormal_vectors[idx])
-            pin_sim = self._pinyin_similarity(target_word, ab)
-            combined = self.alpha * pin_sim + (1 - self.alpha) * sem_sim
+            sem_sim = self._cosine_sim(target_vec, self.abnormal_vectors[idx])      # 语义相似度
+            pin_sim = self._pinyin_similarity(target_word, ab)                      # 发音相似度
+            combined = self.alpha * pin_sim + (1 - self.alpha) * sem_sim            # 加权综合
             scores.append((ab, combined))
+        # 4. 排序取前K个
         scores.sort(key=lambda x: x[1], reverse=True)
         return [ab for ab, _ in scores[:top_k]]
 
@@ -239,13 +245,14 @@ class AsrNoiseAugmenter(BaseAugmenter):
     _SKIP_CHARS = set('，。！？、；：""' "（）《》【】…—·\t\r\n")
 
     def _is_valid_target(self, word: str) -> bool:
-        if not word or not word.strip():
+        ''' 判断一个词是否适合作为替换目标 '''
+        if not word or not word.strip():    # 不能为空
             return False
-        if len(word) <= 1:
+        if len(word) <= 1:          # 不能是单字（单字的ASR错误太随机）
             return False
-        if any(c in self._SKIP_CHARS for c in word):
+        if any(c in self._SKIP_CHARS for c in word):    # 不能包含标点符号
             return False
-        if word.isdigit():
+        if word.isdigit():          # 不能是纯数字
             return False
         return True
 
@@ -257,10 +264,12 @@ class AsrNoiseAugmenter(BaseAugmenter):
         if not getattr(self, "_ready", False):
             return sentence
 
+        # 1. 分词
         words = list(jieba.lcut(sentence))
         if len(words) < 2:
             return sentence
 
+        # 2. 选择候选位置
         candidate_indices = []
         for i in range(1, len(words)):
             if words[i - 1] in self.prev_to_abnormals:
@@ -269,6 +278,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
         if not candidate_indices:
             return sentence
 
+        # 3. 选择不相邻的位置
         max_ops = min(self.max_operations, len(candidate_indices))
         selected = []
         shuffled = sample(candidate_indices, len(candidate_indices), rng=rng)
@@ -278,20 +288,24 @@ class AsrNoiseAugmenter(BaseAugmenter):
                 if len(selected) >= max_ops:
                     break
 
+        # 4. 对每个选中位置执行替换/插入
         operations = []
         for pos in selected:
             prev_word = words[pos - 1]
             target_word = words[pos]
 
+            # 按概率决定是否执行
             if rand(rng=rng) > self.prob:
                 continue
 
+            # 找到最佳异常词
             candidates = self.find_best_abnormals(
                 target_word, prev_word=prev_word, top_k=5
             )
             if not candidates:
                 continue
 
+            # 极性保护
             target_polarity = None
             if target_word in AFFIRMATIVE_WORDS:
                 target_polarity = "affirmative"
@@ -304,6 +318,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
                 if target_polarity is None:
                     chosen = cand
                     break
+                # 检查替换词的极性是否匹配
                 if cand in AFFIRMATIVE_WORDS:
                     cand_polarity = "affirmative"
                 elif cand in NEGATIVE_WORDS:
@@ -316,9 +331,11 @@ class AsrNoiseAugmenter(BaseAugmenter):
             if chosen is None:
                 continue
 
+            # 决定是替换还是插入
             is_insert = rand(rng=rng) < self.insert_prob
             operations.append((pos, chosen, is_insert))
 
+        # 5. 执行操作
         if not operations:
             return sentence
 
@@ -339,6 +356,7 @@ class AsrNoiseAugmenter(BaseAugmenter):
         if not getattr(self, "_ready", False):
             return text
 
+        # 处理斜杠分隔的多部分内容
         if "/" in text or "／" in text:
             parts = re.split(r"[／/]", text)
             enhanced = [self._apply_single(p, rng) for p in parts]

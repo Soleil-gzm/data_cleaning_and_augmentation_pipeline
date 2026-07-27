@@ -58,7 +58,7 @@ class RandomDeleteAugmenter(BaseAugmenter):
             import jieba
             for word in self.protected_words:
                 if len(word) >= 2:
-                    jieba.add_word(word, freq=10000)
+                    jieba.add_word(word, freq=10000)        # 把保护词加入了 jieba 自定义词典
         except ImportError:
             pass
 
