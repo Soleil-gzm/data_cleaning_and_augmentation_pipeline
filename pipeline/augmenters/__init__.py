@@ -30,33 +30,18 @@ from .methods.other import ReorderAugmenter
 from .methods.model import AsrNoiseAugmenter
 
 
-# ---------- 注册（含别名以兼容旧配置里的 similarword / entity_replace 等名字）----------
-AugmenterRegistry.register(
-    "insert_filler", InsertFillerAugmenter, category=CATEGORY_LEXICAL
-)
-AugmenterRegistry.register(
-    "stutter", StutterAugmenter, category=CATEGORY_LEXICAL
-)
-AugmenterRegistry.register(
-    "homophone", HomophoneAugmenter, category=CATEGORY_LEXICAL
-)
-AugmenterRegistry.register(
-    "random_delete", RandomDeleteAugmenter, category=CATEGORY_LEXICAL
-)
-
+# ---------- 注册（分类信息已统一由 categories.AUGMENTER_META 管理）----------
+AugmenterRegistry.register("insert_filler", InsertFillerAugmenter)
+AugmenterRegistry.register("stutter", StutterAugmenter)
+AugmenterRegistry.register("homophone", HomophoneAugmenter)
+AugmenterRegistry.register("random_delete", RandomDeleteAugmenter)
 AugmenterRegistry.register(
     "synonym_replace", SynonymAugmenter,
-    aliases=("similarword", "synonym"), category=CATEGORY_LEXICAL
+    aliases=("similarword", "synonym")
 )
-AugmenterRegistry.register(
-    "word_repetition", WordRepetitionAugmenter, category=CATEGORY_LEXICAL
-)
-AugmenterRegistry.register(
-    "reorder", ReorderAugmenter, category=CATEGORY_ORDER
-)
-AugmenterRegistry.register(
-    "asr_noise", AsrNoiseAugmenter, category=CATEGORY_MODEL
-)
+AugmenterRegistry.register("word_repetition", WordRepetitionAugmenter)
+AugmenterRegistry.register("reorder", ReorderAugmenter)
+AugmenterRegistry.register("asr_noise", AsrNoiseAugmenter)
 
 
 __all__ = [

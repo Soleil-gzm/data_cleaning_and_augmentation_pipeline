@@ -32,7 +32,8 @@ from ..augmenters.categories import requires_model
 from ..augmenters.utils import _ensure_jieba
 from ..io import read_json, write_json, write_jsonl
 
-from .. import augmenters  # 触发所有增强器的注册（import 时完成）
+if not AugmenterRegistry.list_augmenters():
+    from .. import augmenters  # 触发所有增强器的注册（仅当注册表为空时）
 
 def _get_enhanceable_indices(messages, target_roles, only_loss_true):
     """获取可增强消息的索引列表"""
