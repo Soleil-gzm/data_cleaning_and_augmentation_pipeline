@@ -257,14 +257,15 @@ class AsrNoiseAugmenter(BaseAugmenter):
             return False
         return True
 
-    def _enhance_once(self, sentence: str, rng=None) -> str:
+    def _precompute(self, sentence: str) -> Optional[dict]:
+        """轻量级预计算：只分词 + 筛选候选位置（不做向量编码）"""
         if not getattr(self, "_ready", False):
-            return sentence
+            return None
 
         # 1. 分词（使用全局缓存的 tokenize）
         words = tokenize(sentence)
         if len(words) < 2:
-            return sentence
+            return None
 
         # 2. 选择候选位置
         candidate_indices = []
@@ -273,9 +274,78 @@ class AsrNoiseAugmenter(BaseAugmenter):
                 if self._is_valid_target(words[i]):
                     candidate_indices.append(i)
         if not candidate_indices:
-            return sentence
+            return None
 
-        # 3. 选择不相邻的位置
+        # 3. 为每个候选位置预存 meta（prev_word, target_word），不做编码
+        pos_meta = {}
+        for pos in candidate_indices:
+            pos_meta[pos] = {
+                "prev_word": words[pos - 1],
+                "target_word": words[pos],
+            }
+
+        return {
+            "words": words,
+            "candidate_indices": candidate_indices,
+            "pos_meta": pos_meta,
+        }
+
+    def _find_candidates_for_pos(self, pos: int, precomputed: dict,
+                                  vec_cache: dict, k_cache: dict) -> List[str]:
+        """按需计算某位置的候选异常词（带向量缓存和结果缓存）"""
+        # 1. 先检查结果缓存
+        if pos in k_cache:
+            return k_cache[pos]
+
+        # 2. 获取 meta
+        pos_meta = precomputed["pos_meta"][pos]
+        target_word = pos_meta["target_word"]
+        prev_word = pos_meta["prev_word"]
+
+        # 3. 获取或编码目标词的向量（按需编码 + 缓存）
+        if target_word not in vec_cache:
+            vec_cache[target_word] = self.encoder.encode([target_word])[0]
+        target_vec = vec_cache[target_word]
+
+        # 4. 选择候选异常词
+        if prev_word and prev_word in self.prev_to_abnormals:
+            candidates = self.prev_to_abnormals[prev_word]
+        else:
+            candidates = self.abnormal_words
+        if not candidates:
+            k_cache[pos] = []
+            return []
+
+        # 5. 计算综合得分
+        scores = []
+        for ab in candidates:
+            idx = self.word_to_idx.get(ab)
+            if idx is None:
+                continue
+            sem_sim = self._cosine_sim(target_vec, self.abnormal_vectors[idx])
+            pin_sim = self._pinyin_similarity(target_word, ab)
+            combined = self.alpha * pin_sim + (1 - self.alpha) * sem_sim
+            scores.append((ab, combined))
+        scores.sort(key=lambda x: x[1], reverse=True)
+
+        # 6. 缓存并返回 top-5
+        result = [ab for ab, _ in scores[:5]]
+        k_cache[pos] = result
+        return result
+
+    def _enhance_with_cache(self, precomputed: dict, original: str,
+                            rng=None, vec_cache: dict = None,
+                            k_cache: dict = None) -> str:
+        """使用预计算数据执行单次增强（概率过滤优先 + 按需编码）"""
+        if vec_cache is None:
+            vec_cache = {}
+        if k_cache is None:
+            k_cache = {}
+
+        words = precomputed["words"]
+        candidate_indices = precomputed["candidate_indices"]
+
+        # 1. 选择不相邻的位置
         max_ops = min(self.max_operations, len(candidate_indices))
         selected = []
         shuffled = sample(candidate_indices, len(candidate_indices), rng=rng)
@@ -285,22 +355,21 @@ class AsrNoiseAugmenter(BaseAugmenter):
                 if len(selected) >= max_ops:
                     break
 
-        # 4. 对每个选中位置执行替换/插入
+        # 2. 对每个选中位置执行替换/插入
         operations = []
         for pos in selected:
-            prev_word = words[pos - 1]
-            target_word = words[pos]
-
-            # 按概率决定是否执行
+            # ★ 概率过滤优先（快速）
             if rand(rng=rng) > self.prob:
                 continue
 
-            # 找到最佳异常词
-            candidates = self.find_best_abnormals(
-                target_word, prev_word=prev_word, top_k=5
+            # ★ 通过概率检查后，按需编码 + 缓存
+            candidates = self._find_candidates_for_pos(
+                pos, precomputed, vec_cache, k_cache
             )
             if not candidates:
                 continue
+
+            target_word = precomputed["pos_meta"][pos]["target_word"]
 
             # 极性保护
             target_polarity = None
@@ -315,7 +384,6 @@ class AsrNoiseAugmenter(BaseAugmenter):
                 if target_polarity is None:
                     chosen = cand
                     break
-                # 检查替换词的极性是否匹配
                 if cand in AFFIRMATIVE_WORDS:
                     cand_polarity = "affirmative"
                 elif cand in NEGATIVE_WORDS:
@@ -328,13 +396,12 @@ class AsrNoiseAugmenter(BaseAugmenter):
             if chosen is None:
                 continue
 
-            # 决定是替换还是插入
             is_insert = rand(rng=rng) < self.insert_prob
             operations.append((pos, chosen, is_insert))
 
-        # 5. 执行操作
+        # 3. 执行操作
         if not operations:
-            return sentence
+            return original
 
         new_words = words[:]
         for pos, new_word, is_insert in sorted(
@@ -362,8 +429,22 @@ class AsrNoiseAugmenter(BaseAugmenter):
 
     def _apply_single(self, text: str, rng) -> str:
         original = text
+
+        # 1. 轻量级预计算：分词 + 位置筛选
+        precomputed = self._precompute(original)
+        if precomputed is None:
+            return original
+
+        # 2. 重试内缓存（跨重试共享）
+        vec_cache = {}  # target_word -> embedding
+        k_cache = {}    # pos -> top-k candidates
+
+        # 3. 重试循环：概率过滤优先 + 按需编码
         for _ in range(self.retry_times):
-            result = self._enhance_once(original, rng=rng)
+            result = self._enhance_with_cache(
+                precomputed, original, rng=rng,
+                vec_cache=vec_cache, k_cache=k_cache
+            )
             if result != original:
                 return result
         return original
