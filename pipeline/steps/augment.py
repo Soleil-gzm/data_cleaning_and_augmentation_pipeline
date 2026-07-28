@@ -29,7 +29,7 @@ from ..core.step import PipelineStep
 from ..augmenters import CompositeAugmenter, AugmenterRegistry
 from ..utils.random_utils import RandomGenerator
 from ..augmenters.categories import requires_model
-from ..augmenters.utils import _ensure_jieba
+from ..augmenters.utils import _ensure_jieba, log_tokenize_cache_stats
 from ..io import read_json, write_json, write_jsonl
 
 if not AugmenterRegistry.list_augmenters():
@@ -305,6 +305,9 @@ class AugmentStep(PipelineStep):
         write_json(all_variants, variants_json)
         write_jsonl(all_variants, variants_jsonl)
 
+        # 记录分词缓存统计
+        cache_stats = log_tokenize_cache_stats(self.logger, prefix="分词缓存")
+
         metadata = {
             "run_id": run_id,
             "step": "augment",
@@ -318,6 +321,7 @@ class AugmentStep(PipelineStep):
                 "total_dialogues": len(all_dialogues),
                 "failed_dialogues": failed,
             },
+            "cache_stats": cache_stats,
         }
         write_json(metadata, output_dir / "run_metadata.json")
 

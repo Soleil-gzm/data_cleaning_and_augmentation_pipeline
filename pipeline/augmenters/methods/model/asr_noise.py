@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from ...base import BaseAugmenter
+from ...utils import tokenize
 from ....utils.random_utils import rand, choice, sample
 from ....io import read_pickle
 
@@ -257,15 +258,11 @@ class AsrNoiseAugmenter(BaseAugmenter):
         return True
 
     def _enhance_once(self, sentence: str, rng=None) -> str:
-        try:
-            import jieba
-        except ImportError:
-            return sentence
         if not getattr(self, "_ready", False):
             return sentence
 
-        # 1. 分词
-        words = list(jieba.lcut(sentence))
+        # 1. 分词（使用全局缓存的 tokenize）
+        words = tokenize(sentence)
         if len(words) < 2:
             return sentence
 

@@ -8,8 +8,12 @@ import re
 import random
 from pathlib import Path
 from typing import List, Set, Dict
+from functools import lru_cache
 
 _JIEBA_LOADED = False
+
+# 缓存大小可通过环境变量配置，默认 50000
+_TOKENIZE_CACHE_SIZE = int(os.environ.get("TOKENIZE_CACHE_SIZE", "10000"))
 
 
 def _ensure_jieba():
@@ -50,12 +54,47 @@ def split_sentences(text: str) -> List[str]:
     return sentences
 
 
-def tokenize(text: str) -> List[str]:
-    """使用 jieba 分词"""
+@lru_cache(maxsize=_TOKENIZE_CACHE_SIZE)
+def tokenize_cached(text: str) -> tuple:
+    """缓存版本的分词函数（返回 tuple 以便缓存）"""
     _ensure_jieba()
     import jieba
+    return tuple(jieba.cut(text))
 
-    return list(jieba.cut(text))
+
+def tokenize(text: str) -> List[str]:
+    """使用 jieba 分词（全局缓存版本）"""
+    return list(tokenize_cached(text))
+
+
+def clear_tokenize_cache():
+    """清除分词缓存"""
+    tokenize_cached.cache_clear()
+
+
+def get_tokenize_cache_info():
+    """获取缓存统计信息（返回 namedtuple: hits, misses, maxsize, currsize）"""
+    return tokenize_cached.cache_info()
+
+
+def log_tokenize_cache_stats(logger: logging.Logger, prefix: str = "Tokenize缓存"):
+    """记录缓存命中率统计"""
+    info = get_tokenize_cache_info()
+    total = info.hits + info.misses
+    hit_rate = (info.hits / total * 100) if total > 0 else 0.0
+
+    logger.info(
+        f"{prefix} - 命中: {info.hits}, 未命中: {info.misses}, "
+        f"命中率: {hit_rate:.2f}%, 当前条目: {info.currsize}/{info.maxsize}"
+    )
+
+    return {
+        "hits": info.hits,
+        "misses": info.misses,
+        "hit_rate": hit_rate,
+        "currsize": info.currsize,
+        "maxsize": info.maxsize,
+    }
 
 
 def load_word_set(file_path: str) -> Set[str]:
