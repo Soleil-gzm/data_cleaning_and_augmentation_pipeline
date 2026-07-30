@@ -4,12 +4,17 @@ from pathlib import Path
 
 # ========== 硬编码配置 ==========
 INPUT_FILE = "datas/suning_tools/data-record-processed-92049-filter.json"          # 你的输入文件
-OUTPUT_FILE = "suning_tools/data-simulation-general2suning-260720_replaced.json"  # 输出路径
+OUTPUT_FILE = "suning_tools/data-record-processed-92049-filter_replaced.json"  # 输出路径
 # ================================
 
-# 两步正则：先处理“我的工号”+后续标点，再处理普通工号
+# 1. 匹配“我的工号”格式，包括后面的逗号等（需删除后续标点）
 PATTERN_MY = re.compile(r"[,，、。\s]*我的(?:的)?工号(?:是)?\s*\d+[,，、。]?")
+
+# 2. 匹配普通工号格式（不含后续标点，保留标点）
 PATTERN_OTHER = re.compile(r"[,，、。\s]*工号(?:是)?\s*\d+")
+
+# 3. 匹配尾号格式（包括前面的标点和后面的空格或“的”）
+PATTERN_TAIL = re.compile(r"[,，、。\s]*尾号\s*\d+\s*(?:的)?\s*")
 
 def should_keep_assistant_employee_id(messages, idx):
     """判断 idx 位置的 assistant 是否应保留工号（前一条 user 提到工号）"""
@@ -18,15 +23,14 @@ def should_keep_assistant_employee_id(messages, idx):
     prev = messages[idx - 1]
     if prev.get("role") != "user":
         return False
-    # 检测前一条 user 是否含有工号数字（不关心是否有“我的”）
-    return bool(re.search(r"工号(?:是)?\s*\d+", prev["content"]))
+    # 只要 user 提到“工号”就触发保留
+    return "工号" in prev["content"]
 
 def clean_text(text: str) -> str:
-    """两步清理：先删“我的工号”+后续标点，再删普通工号（不删后续标点）"""
-    # 第一步：删除“我的工号”模式（包括后面的逗号等）
+    """三步清理：先删“我的工号”+后续标点，再删普通工号，最后删尾号"""
     text = PATTERN_MY.sub("", text)
-    # 第二步：删除其他工号模式（不删除后面标点）
     text = PATTERN_OTHER.sub("", text)
+    text = PATTERN_TAIL.sub("", text)
     return text
 
 def process_dialogue(dialogue):
