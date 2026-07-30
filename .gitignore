@@ -4,6 +4,8 @@ logs/
 output/
 reports/
 *.pkl
+configs/test
+suning_tools/
 
 intermediate/
 generate_structure.py
