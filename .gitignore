@@ -29,3 +29,5 @@ configs/pipeline/suning/
 configs/pipeline/
 jieba.cache
 intermediate0713/
+tools/datas/
+tools/result/

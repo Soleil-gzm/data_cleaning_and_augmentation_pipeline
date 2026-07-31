@@ -3,8 +3,8 @@ import re
 from pathlib import Path
 
 # ========== 硬编码配置 ==========
-INPUT_FILE = "datas/suning_tools/data-record-processed-92049-filter.json"          # 你的输入文件
-OUTPUT_FILE = "suning_tools/data-record-processed-92049-filter_replaced.json"  # 输出路径
+INPUT_FILE = "tools/result/notdue/data-backbone-notdue-2w-cleaned-260723_replace2.json"          # 你的输入文件
+OUTPUT_FILE = "tools/result/ID/notdue/data-backbone-notdue-2w-cleaned-260723_IDreplace2.json"  # 输出路径
 # ================================
 
 # 1. 匹配“我的工号”格式，包括后面的逗号等（需删除后续标点）

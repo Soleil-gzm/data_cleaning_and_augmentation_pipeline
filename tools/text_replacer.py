@@ -21,9 +21,9 @@ except ImportError:
 
 
 # ========== 硬编码配置（直接修改这里） ==========
-RULES_FILE = "tools/rules/due.yaml"   # 规则文件路径
-INPUT_FILE = "datas/suning_tools/suning_overdue_generate_20000_42_20260723_094449.json"            # 输入 JSON 文件路径
-OUTPUT_FILE = "suning_tools/suning_overdue_generate_20000_42_20260723_094449_replace.json"          # 输出 JSON 文件路径
+RULES_FILE = "tools/rules/notdue1.yaml"   # 规则文件路径
+INPUT_FILE = "tools/datas/notdue/data-backbone-notdue-2w-cleaned-260723.json"            # 输入 JSON 文件路径
+OUTPUT_FILE = "tools/result/data-backbone-notdue-2w-cleaned-260723_replace1.json"          # 输出 JSON 文件路径
 # =============================================
 
 
